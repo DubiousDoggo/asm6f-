@@ -321,7 +321,7 @@ int scope;               //current scope, 0=global
 int nextscope;           //next nonglobal scope (increment on each new block of localized code)
 bool lastchance = false; //set on final attempt
 bool needanotherpass;    //still need to take care of some things..
-int error = 0;           //hard error (stop assembly after this pass)
+bool error = false;      //hard error (stop assembly after this pass)
 char **makemacro = 0;    //(during macro creation) where next macro line will go.  1 to skip past macro
 char **makerept;         //like makemacro.. points to end of string chain
 int reptcount = 0;       //counts rept statements during rept string storage
@@ -606,9 +606,6 @@ int getvalue(char **str)
   return ret;
 }
 
-char mathy[] = "!^&|+-*/%()<>=,";
-//precedence levels
-char prec[] = {WHOLEEXP, EQCOMPARE, EQCOMPARE, COMPARE, COMPARE, COMPARE, COMPARE, PLUSMINUS, PLUSMINUS, MULDIV, MULDIV, MULDIV, ANDP, XORP, ORP, ANDANDP, ORORP, SHIFT, SHIFT}; //precedence of each operator
 //get operator from str and advance str
 int getoperator(char **str)
 {
@@ -685,7 +682,7 @@ int getoperator(char **str)
       (*str)++;
       return NOTEQUAL;
     }
-    //(to default)
+    // no break
   default:
     (*str)--;
     return NOOP;
@@ -1123,12 +1120,9 @@ void export_labelfiles()
 {
   // iterate through all the labels and output FCEUX-compatible label info files
   // based on their type (LABEL's,EQUATE's,VALUE's), address (ram/rom), and position (bank)
-  int bank;
-  label *l;
   char str[512];
   char filename[512];
   FILE *bankfiles[64];
-  FILE *ramfile;
   char *strptr;
 
   for (int i = 0; i < 64; i++)
@@ -1149,7 +1143,7 @@ void export_labelfiles()
     strptr = filename + strlen(str); // strptr -> inputfile extension
   strcpy(strptr, ".nes.ram.nl");
 
-  ramfile = fopen(filename, "w");
+  FILE *ramfile = fopen(filename, "w");
 
   // the bank files are created ad-hoc before being written to.
 
@@ -1177,14 +1171,12 @@ void export_labelfiles()
       // puts(str);
 
       if (l->value < 0x8000)
-      {
-        // RAM
+      { // RAM
         fwrite((const void *)str, 1, strlen(str), ramfile);
       }
       else
-      {
-        // ROM
-        bank = ((l->pos - 16) / 16384);
+      { // ROM
+        int bank = ((l->pos - 16) / 16384);
         if (!bankfiles[bank])
         {
           sprintf(strptr, ".nes.%X.nl", bank);
@@ -1271,17 +1263,12 @@ int comparecomments(const void *arg1, const void *arg2)
 // based on their type (LABEL's,EQUATE's,VALUE's) and address (ram/rom)
 void export_mesenlabels()
 {
-
-  char *commenttext;
-  label *l;
   char str[512];
   char filename[512];
-  char *strptr;
-  FILE *outfile;
 
   strcpy(filename, outputfilename);
 
-  strptr = strrchr(filename, '.'); // strptr ='.'ptr
+  char *strptr = strrchr(filename, '.'); // strptr ='.'ptr
   if (strptr)
     if (strchr(strptr, '\\'))
       strptr = 0; // watch out for "dirname.ext\listfile"
@@ -1289,7 +1276,7 @@ void export_mesenlabels()
     strptr = filename + strlen(filename); // strptr -> inputfile extension
   strcpy(strptr, ".mlb");
 
-  outfile = fopen(filename, "w");
+  FILE *outfile = fopen(filename, "w");
 
   int currentcomment = 0;
 
@@ -1312,7 +1299,7 @@ void export_mesenlabels()
       }
 
       //Check if one or more comments match this address
-      commenttext = 0;
+      char *commenttext = nullptr;
       while (currentcomment < commentcount)
       {
         comment *c = comments[currentcomment];
@@ -1382,17 +1369,19 @@ void export_mesenlabels()
 //local:
 //  false: if label starts with LOCALCHAR, make it local, otherwise it's global
 //  true: force label to be local (used for macros)
-void addlabel(char *word, int local)
+void addlabel(char *word, bool local)
 {
   char c = *word;
   label *p = findlabel(word);
   if (p && local && !p->scope && p->type != VALUE) //if it's global and we're local
     p = 0;                                         //pretend we didn't see it (local label overrides global of the same name)
+
   //global labels advance scope
   if (c != LOCALCHAR && !local)
   {
     scope = nextscope++;
   }
+
   if (!p)
   { //new label
     labelhere = newlabel();
@@ -1452,7 +1441,7 @@ void addlabel(char *word, int local)
 }
 
 //initialize label list
-void initlabels(void)
+void initlabels()
 {
   label *p;
 
@@ -1481,14 +1470,14 @@ void initlabels(void)
   lastlabel = p;
 }
 
-void initcomments(void)
+void initcomments()
 {
   commentcount = 0;
   commentcapacity = 1000;
   comments = (comment **)my_malloc(commentcapacity * sizeof(comment *));
 }
 
-void growcommentlist(void)
+void growcommentlist()
 {
   if (commentcount == commentcapacity)
   {
@@ -1637,7 +1626,7 @@ label *newlabel()
 
 void showerror(char *errsrc, int errline)
 {
-  error = 1;
+  error = true;
   fprintf(stderr, "%s(%i): %s\n", errsrc, errline, errmsg);
 
   if (!listerr) //only list the first error for this line
@@ -1741,7 +1730,7 @@ void processline(char *src, char *errsrc, int errline)
             makemacro = 0;
         break;
       }
-      
+
       if (reptcount)
       { //REPT definition is in progress?
         p = getreserved(&s);
@@ -2052,7 +2041,7 @@ int main(int argc, char **argv)
   {
     if (!error)
       fputs("nothing to do!", stderr);
-    error = 1;
+    error = true;
   }
   if (listfile)
     listline(0, 0);
@@ -2320,7 +2309,7 @@ void include(label *id, char **next)
   if (!f)
   {
     errmsg = CantOpen;
-    error = 1;
+    error = true;
   }
   else
   {
@@ -2990,8 +2979,6 @@ void enum_(label *id, char **next)
   int val = 0;
   dependant = 0;
   val = eval(next, WHOLEEXP);
-  //  if(!dependant && !errmsg) {
-  //  }
   if (!nooutput)
     enum_saveaddr = addr;
   addr = val;
@@ -3038,7 +3025,7 @@ void make_error(label *id, char **next)
   reverse(tmpstr, s + strspn(s, whitesp2)); //eat whitesp, quotes off both ends
   reverse(s, tmpstr + strspn(tmpstr, whitesp2));
   errmsg = s;
-  error = 1;
+  error = true;
   *next = s + strlen(s);
 }
 

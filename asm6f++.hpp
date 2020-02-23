@@ -71,6 +71,7 @@ enum optypes
   IMP
 };
 
+//precedence levels
 enum prectypes
 {
   WHOLEEXP,
@@ -84,7 +85,7 @@ enum prectypes
   SHIFT,
   PLUSMINUS,
   MULDIV,
-  UNARY
+  UNARY,
 };
 
 enum operators
@@ -107,8 +108,33 @@ enum operators
   ANDAND,
   OROR,
   LEFTSHIFT,
-  RIGHTSHIFT
+  RIGHTSHIFT,
 };
+
+char mathy[] = "!^&|+-*/%()<>=,";
+
+//precedence of each operator
+const char prec[] = {
+    WHOLEEXP,
+    EQCOMPARE,
+    EQCOMPARE,
+    COMPARE,
+    COMPARE,
+    COMPARE,
+    COMPARE,
+    PLUSMINUS,
+    PLUSMINUS,
+    MULDIV,
+    MULDIV,
+    MULDIV,
+    ANDP,
+    XORP,
+    ORP,
+    ANDANDP,
+    ORORP,
+    SHIFT,
+    SHIFT,
+}; 
 
 struct label
 {
