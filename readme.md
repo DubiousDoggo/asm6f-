@@ -1,9 +1,8 @@
 # ASM6f++ (v1.7)
-## A C++ port of of ASM6f by DubiousDoggo,
-## A 6502 assembler by loopy (loopy at mm.st)
-## With modifications by freem, nicklausw, and Sour
+### A C++ port of of ASM6f by DubiousDoggo,
+### A 6502 assembler by loopy (loopy at mm.st)
+### With modifications by freem, nicklausw, and Sour
 
---------------------------------------------------------------
 ASM6f is a fork of ASM6, primarily targeted at NES/Famicom development.
 
 Yes, it's another 6502 assembler.  I built it to do NES development, but you
@@ -28,7 +27,6 @@ of this software in any fashion.
 * Output of Mesen-compatible symbol files.
 
 
---------------------------------------------------------------
 Command line
 --------------------------------------------------------------
 
@@ -50,7 +48,7 @@ Command line
     Default output is <sourcefile>.bin
     Default listing is <sourcefile>.lst
 
---------------------------------------------------------------
+
 Syntax
 --------------------------------------------------------------
 
@@ -63,7 +61,7 @@ optional.
     label1: jmp label2
     label2  beq label1
 
---------------------------------------------------------------
+
 Numbers and expressions
 --------------------------------------------------------------
 
@@ -100,7 +98,7 @@ preceded by a backslash (\\).
 and `>` operators give the lower and upper byte of a 16-bit word (respectively).
 All other operators function like their C equivalents.
 
---------------------------------------------------------------
+
 Labels
 --------------------------------------------------------------
 
@@ -136,7 +134,7 @@ especially useful for forward and reverse branches.
 +here nop
 ```
 
---------------------------------------------------------------
+
 Assembler directives (in no particular order)
 --------------------------------------------------------------
 
@@ -309,7 +307,6 @@ Stop assembly and display a message.
     ENDIF
 
 
---------------------------------------------------------------
 Additional assembler directives (ASM6f)
 --------------------------------------------------------------
 
@@ -350,7 +347,7 @@ Enables use of highly unstable 6502 opcodes.
     HUNSTABLE
     xaa #7
 
---------------------------------------------------------------
+
 iNES directives
 --------------------------------------------------------------
 
@@ -390,7 +387,7 @@ Amount of battery-packed PRG RAM in NES ROM.
 ### NES2CHRBRAM x
 Amount of battery-packed CHR RAM in NES ROM.
 
---------------------------------------------------------------
+
 Supported Undocumented Opcodes
 --------------------------------------------------------------
 asm6f supports the use of a number of undocumented/"illegal" opcodes.
@@ -524,9 +521,9 @@ The alternate `$EB` opcode for `sbc #{immediate}` is not supported.
 
 > requires HUNSTABLE directive.
 
-<!-- is it? lax is currently not supported. -->
+<!-- lax is currently not supported. is it? -->
 
---------------------------------------------------------------
+
 loopy's original To-Do List
 --------------------------------------------------------------
 - do NOT open source files in update mode, since we do not want to modify them in any way
@@ -537,7 +534,6 @@ loopy's original To-Do List
 - make everything static
 - redundant parsing code is all over the place, try clean it up / consolidate
 
---------------------------------------------------------------
 freem's To-Do List
 --------------------------------------------------------------
 * add .undef? (could react badly on other passes)
@@ -548,7 +544,5 @@ freem's To-Do List
        possibly
  support a different syntax, despite incompatibility?
 * add ca65 debug format for NintendulatorDX
-
---------------------------------------------------------------
 
 <EOF>
