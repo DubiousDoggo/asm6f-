@@ -16,20 +16,13 @@
 #define DEFAULTFILLER 0       // default fill value
 #define LOCALCHAR '@'         // character to define local labels
 
-/**	
- * LABEL: known address
- * VALUE: defined with '='
- * EQUATE: defined with EQU
- * MACRO: macro
- * RESERVED: reserved word
- */
-enum labeltypes
+enum labeltype
 {
-  LABEL,
-  VALUE,
-  EQUATE,
-  MACRO,
-  RESERVED
+  LABEL,    // known address
+  VALUE,    // defined with '='
+  EQUATE,   // defined with EQU
+  MACRO,    // macro definition
+  RESERVED, // reserved word (opcode, directive, etc.)
 };
 
 enum cdltypes
@@ -39,36 +32,22 @@ enum cdltypes
   DATA = 2
 };
 
-/**
- * ACC: Accumulator
- * IMM: Immediate
- * IND: Indirect
- * INDX: X-Indexed, Indirect
- * INDY: Indirect, Y-Inexed
- * ZPX: Zero Page, X-Indexed
- * ZPY: Zero Page, Y-Indexed
- * ABSX: Absolute, X-Indexed
- * ABSY: Absolute, Y-Indexed
- * ZP: Zero Page
- * ABS: Absolute
- * REL: Relative
- * IMP: Implied
- */
+// operand type, also called addressing mode
 enum optypes
 {
-  ACC,
-  IMM,
-  IND,
-  INDX,
-  INDY,
-  ZPX,
-  ZPY,
-  ABSX,
-  ABSY,
-  ZP,
-  ABS,
-  REL,
-  IMP
+  ACC,  // Accumulator
+  IMM,  // Immediate
+  IND,  // Indirect
+  INDX, // X-Indexed, Indirect
+  INDY, // Indirect, Y-Inexed
+  ZPX,  // Zero Page, X-Indexed
+  ZPY,  // Zero Page, Y-Indexed
+  ABSX, // Absolute, X-Indexed
+  ABSY, // Absolute, Y-Indexed
+  ZP,   // Zero Page
+  ABS,  // Absolute
+  REL,  // Relative
+  IMP   // Implied
 };
 
 //precedence levels
@@ -90,28 +69,26 @@ enum prectypes
 
 enum operators
 {
-  NOOP,
-  EQUAL,
-  NOTEQUAL,
-  GREATER,
-  GREATEREQ,
-  LESS,
-  LESSEQ,
-  PLUS,
-  MINUS,
-  MUL,
-  DIV,
-  MOD,
-  AND,
-  XOR,
-  OR,
-  ANDAND,
-  OROR,
-  LEFTSHIFT,
-  RIGHTSHIFT,
+  NOOP,       // no operation
+  EQUAL,      // equal to
+  NOTEQUAL,   // not equal
+  GREATER,    // greater than
+  GREATEREQ,  // greater than or equal to
+  LESS,       // less than
+  LESSEQ,     // less than or equal to
+  PLUS,       // addition
+  MINUS,      // subtraciton
+  MUL,        // multiplication
+  DIV,        // division
+  MOD,        // modulo
+  AND,        // bitwise and
+  XOR,        // bitwise exclusive or
+  OR,         // bitwise or
+  ANDAND,     // boolean and
+  OROR,       // boolean or
+  LEFTSHIFT,  // bitwise shift left
+  RIGHTSHIFT, // bitwise shift right
 };
-
-char mathy[] = "!^&|+-*/%()<>=,";
 
 //precedence of each operator
 const char prec[] = {
