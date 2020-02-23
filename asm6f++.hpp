@@ -113,22 +113,30 @@ enum operators
 struct label
 {
   const char *name; //label name
-  // ptrdiff_t so it can hold function pointer on 64-bit machines
-  ptrdiff_t value; //PC (label), value (equate), param count (macro), funcptr (reserved)
 
-  // [freem addition (from asm6_sonder.c)]
-  int pos; // location in file; used to determine bank when exporting labels
+  /** 
+   * value represents different things depending on the label's usage
+   * label: memory address, 
+   * equate: value
+   * macro: param count
+   * reserved word: function pointer
+   */
+  ptrdiff_t value;
 
-  char *line;   //for macro or equate, also used to mark unknown label
-                //*next:text->*next:text->..
-                //for macros, the first <value> lines hold param names
-                //for opcodes (reserved), this holds opcode definitions, see initlabels
-  int type;     //labeltypes enum (see above)
-  int used;     //for EQU and MACRO recursion check
-  int pass;     //when label was last defined
-  int scope;    //where visible (0=global, nonzero=local)
-  int ignorenl; //[freem addition] output this label in .nl files? (0=yes, nonzero=no)
-  label *link;  //labels that share the same name (local labels) are chained together
+  int pos; // Location in file; used to determine bank when exporting labels
+
+  // TODO un-kitchensink this boi
+  char *line; //for macro or equate, also used to mark unknown label
+              //*next:text->*next:text->..
+              //for macros, the first <value> lines hold param names
+              //for opcodes (reserved), this holds opcode definitions, see initlabels
+
+  int type;      // labeltypes enum (see above)
+  int used;      // for EQU and MACRO recursion check
+  int pass;      // when label was last defined
+  int scope;     // where visible (0=global, nonzero=local)
+  bool ignorenl; // supress this label from .nl files?
+  label *link;   // labels that share the same name (local labels) are chained together
 };
 
 struct comment
@@ -144,13 +152,26 @@ struct directive
 };
 
 typedef uint8_t byte;
-inline constexpr byte operator"" _ub(unsigned long long arg) noexcept
-{
-  return static_cast<byte>(arg);
-}
 const byte END_BYTE = -1;
 
+// what the heck does icfn stand for?
 typedef void (*icfn)(label *, char **);
+
+label *findlabel(const char *);
+void initlabels();
+label *newlabel();
+void getword(char *, char **, int);
+int getvalue(char **);
+int getoperator(char **);
+int eval(char **, int);
+label *getreserved(char **);
+int getlabel(char *, char **);
+
+void processline(char *, char *, int);
+void listline(char *, char *);
+void endlist();
+
+// reserved word functions //
 
 void inesprg(label *, char **);
 void ineschr(label *, char **);
@@ -164,20 +185,6 @@ void nes2tv(label *, char **);
 void nes2vs(label *, char **);
 void nes2bram(label *, char **);
 void nes2chrbram(label *, char **);
-
-label *findlabel(char *);
-void initlabels();
-label *newlabel();
-void getword(char *, char **, int);
-int getvalue(char **);
-int getoperator(char **);
-int eval(char **, int);
-label *getreserved(char **);
-int getlabel(char *, char **);
-
-void processline(char *, char *, int);
-void listline(char *, char *);
-void endlist();
 
 void opcode(label *, char **);
 void org(label *, char **);
@@ -208,13 +215,14 @@ void endr(label *, char **);
 void rept(label *, char **);
 void enum_(label *, char **);
 void ende(label *, char **);
-void ignorenl(label *, char **); // [freem addition] "ignorenl"
-void endinl(label *, char **);   // [freem addition] "endinl"
+void ignorenl(label *, char **);
+void endinl(label *, char **);
 void fillval(label *, char **);
-void expandmacro(label *, char **, int, char *);
-void expandrept(int, char *);
 void make_error(label *, char **);
 void unstable(label *, char **);
 void hunstable(label *, char **);
+
+void expandmacro(label *, char **, int, char *);
+void expandrept(int, char *);
 
 #endif

@@ -2,6 +2,8 @@
 #include "asm6f++.hpp"
 
 #include <vector>
+#include <iostream>
+#include <algorithm>
 
 #include <stdio.h>
 #include <string.h>
@@ -10,6 +12,7 @@
 #include <ctype.h>
 #include <stdarg.h>
 
+// what even the fuck
 static void *true_ptr = &true_ptr;
 
 label firstlabel = {
@@ -137,97 +140,93 @@ const byte tas[] = {0x9b, ABSY, END_BYTE};
 const byte xaa[] = {0x8b, IMM, END_BYTE};
 //byte lax[]={0xab,IMM,END_BYTE};
 
-const void *reserved_words[] = { //all reserved words
-    "BRK", brk,
-    "PHP", php,
-    "BPL", bpl,
-    "CLC", clc,
-    "JSR", jsr,
-    "PLP", plp,
-    "BMI", bmi,
-    "SEC", sec,
-    "RTI", rti,
-    "PHA", pha,
-    "BVC", bvc,
-    "CLI", cli,
-    "RTS", rts,
-    "PLA", pla,
-    "BVS", bvs,
-    "SEI", sei,
-    "DEY", dey,
-    "BCC", bcc,
-    "TYA", tya,
-    "LDY", ldy,
-    "TAY", tay,
-    "BCS", bcs,
-    "CLV", clv,
-    "CPY", cpy,
-    "INY", iny,
-    "BNE", bne,
-    "CLD", cld,
-    "CPX", cpx,
-    "INX", inx,
-    "BEQ", beq,
-    "SED", sed,
-    "ORA", ora,
-    "AND", and_,
-    "EOR", eor,
-    "ADC", adc,
-    "STA", sta,
-    "LDA", lda,
-    "CMP", cmp,
-    "SBC", sbc,
-    "ASL", asl,
-    "ROL", rol,
-    "LSR", lsr,
-    "ROR", ror,
-    "TXA", txa,
-    "TXS", txs,
-    "LDX", ldx,
-    "TAX", tax,
-    "TSX", tsx,
-    "DEX", dex,
-    "NOP", nop,
-    "BIT", bit,
-    "JMP", jmp,
-    "STY", sty,
-    "STX", stx,
-    "DEC", dec,
-    "INC", inc,
+// reserved words
+const std::vector<std::pair<const char *, const byte *>> mnemonics = {
+    {"BRK", brk},
+    {"PHP", php},
+    {"BPL", bpl},
+    {"CLC", clc},
+    {"JSR", jsr},
+    {"PLP", plp},
+    {"BMI", bmi},
+    {"SEC", sec},
+    {"RTI", rti},
+    {"PHA", pha},
+    {"BVC", bvc},
+    {"CLI", cli},
+    {"RTS", rts},
+    {"PLA", pla},
+    {"BVS", bvs},
+    {"SEI", sei},
+    {"DEY", dey},
+    {"BCC", bcc},
+    {"TYA", tya},
+    {"LDY", ldy},
+    {"TAY", tay},
+    {"BCS", bcs},
+    {"CLV", clv},
+    {"CPY", cpy},
+    {"INY", iny},
+    {"BNE", bne},
+    {"CLD", cld},
+    {"CPX", cpx},
+    {"INX", inx},
+    {"BEQ", beq},
+    {"SED", sed},
+    {"ORA", ora},
+    {"AND", and_},
+    {"EOR", eor},
+    {"ADC", adc},
+    {"STA", sta},
+    {"LDA", lda},
+    {"CMP", cmp},
+    {"SBC", sbc},
+    {"ASL", asl},
+    {"ROL", rol},
+    {"LSR", lsr},
+    {"ROR", ror},
+    {"TXA", txa},
+    {"TXS", txs},
+    {"LDX", ldx},
+    {"TAX", tax},
+    {"TSX", tsx},
+    {"DEX", dex},
+    {"NOP", nop},
+    {"BIT", bit},
+    {"JMP", jmp},
+    {"STY", sty},
+    {"STX", stx},
+    {"DEC", dec},
+    {"INC", inc},
 
     /* begin undocumented/illegal opcodes */
-    "SLO", slo,
-    "RLA", rla,
-    "SRE", sre,
-    "RRA", rra,
-    "SAX", sax,
-    "LAX", lax,
-    "DCP", dcp,
-    "ISC", isc,
-    "ANC", anc,
-    "ALR", alr,
-    "ARR", arr,
-    "AXS", axs,
-    "LAS", las,
+    {"SLO", slo},
+    {"RLA", rla},
+    {"SRE", sre},
+    {"RRA", rra},
+    {"SAX", sax},
+    {"LAX", lax},
+    {"DCP", dcp},
+    {"ISC", isc},
+    {"ANC", anc},
+    {"ALR", alr},
+    {"ARR", arr},
+    {"AXS", axs},
+    {"LAS", las},
 
     /* somewhat unstable instructions */
-    "AHX", ahx,
-    "SHY", shy,
-    "SHX", shx,
-    "TAS", tas,
+    {"AHX", ahx},
+    {"SHY", shy},
+    {"SHX", shx},
+    {"TAS", tas},
 
     /* highly unstable instructions */
-    "XAA", xaa,
-
-    /* end list */
-    0, 0};
+    {"XAA", xaa}};
 
 const char *unstablelist[] = {
     "AHX", "SHY", "SHX", "TAS"};
 
-
-
-const directive directives[] = {
+const std::vector<directive> directives = {
     {"", nothing},
     {"IF", if_},
     {"ELSEIF", elseif},
@@ -283,7 +282,7 @@ const directive directives[] = {
     {"NES2CHRBRAM", nes2chrbram},
     {"UNSTABLE", unstable},
     {"HUNSTABLE", hunstable},
-    {0, 0}};
+};
 
 const char OutOfRange[] = "Value out of range.";
 const char SeekOutOfRange[] = "Seek position out of range.";
@@ -318,17 +317,17 @@ const char whitesp2[] = " \t\r\n\""; //(used for filename processing)
 char tmpstr[LINEMAX]; //all purpose big string
 
 int pass = 0;
-int scope;             //current scope, 0=global
-int nextscope;         //next nonglobal scope (increment on each new block of localized code)
-int lastchance = 0;    //set on final attempt
-int needanotherpass;   //still need to take care of some things..
-int error = 0;         //hard error (stop assembly after this pass)
-char **makemacro = 0;  //(during macro creation) where next macro line will go.  1 to skip past macro
-char **makerept;       //like makemacro.. points to end of string chain
-int reptcount = 0;     //counts rept statements during rept string storage
-int iflevel = 0;       //index into ifdone[],skipline[]
-int ifdone[IFNESTS];   //nonzero if current IF level has been true
-int skipline[IFNESTS]; //1 on an IF statement that is false
+int scope;               //current scope, 0=global
+int nextscope;           //next nonglobal scope (increment on each new block of localized code)
+bool lastchance = false; //set on final attempt
+bool needanotherpass;    //still need to take care of some things..
+int error = 0;           //hard error (stop assembly after this pass)
+char **makemacro = 0;    //(during macro creation) where next macro line will go.  1 to skip past macro
+char **makerept;         //like makemacro.. points to end of string chain
+int reptcount = 0;       //counts rept statements during rept string storage
+int iflevel = 0;         //index into ifdone[],skipline[]
+int ifdone[IFNESTS];     //nonzero if current IF level has been true
+int skipline[IFNESTS];   //1 on an IF statement that is false
 const char *errmsg;
 char *inputfilename = 0;
 char *outputfilename = 0;
@@ -346,30 +345,18 @@ FILE *outputfile = 0;
 FILE *cdlfile = 0;
 byte outputbuff[BUFFSIZE];
 byte inputbuff[BUFFSIZE];
-int outcount;      //bytes waiting in outputbuff
-label **labellist; //array of label pointers (list starts from center and grows outward)
-int labels;        //# of labels in labellist
-int maxlabels;     //max # of labels labellist can hold
-int labelstart;    //index of first label
-int labelend;      //index of last label
-label *lastlabel;  //last label created
+int outcount; //bytes waiting in outputbuff
+std::vector<label *> labellist;
+label *lastlabel; //last label created
 comment **comments;
 int commentcount;
 int commentcapacity;
 int lastcommentpos = -1;
 int nooutput = 0;    //supress output (use with ENUM)
-int nonl = 0;        //[freem addition] supress output to .nl files
+bool nonl = false;   //[freem addition] supress output to .nl files
 int defaultfiller;   //default fill value
 int insidemacro = 0; //macro/rept is being expanded
 int verbose = 1;
-
-static void *ptr_from_bool(int b)
-{
-  if (b)
-    return true_ptr;
-
-  return NULL;
-}
 
 // Prints printf-style message to stderr, then exits.
 // Closes and deletes output file.
@@ -377,7 +364,7 @@ static void fatal_error(const char fmt[], ...)
 {
   va_list args;
 
-  if (outputfile != NULL)
+  if (outputfile != nullptr)
   {
     fclose(outputfile);
     remove(outputfilename);
@@ -408,7 +395,7 @@ static void message(const char fmt[], ...)
 static char *my_malloc(size_t s)
 {
   char *p = static_cast<char *>(malloc(s ? s : 1));
-  if (p == NULL)
+  if (p == nullptr)
     fatal_error("out of memory");
 
   return p;
@@ -434,9 +421,9 @@ char *my_strupr(char *string)
 {
   char *s;
 
-  if (string == NULL)
+  if (string == nullptr)
   {
-    return (char *)NULL;
+    return nullptr;
   }
 
   for (s = string; *s; ++s)
@@ -591,7 +578,8 @@ int getvalue(char **str)
     p = findlabel(gvline);
     if (!p)
     { //label doesn't exist (yet?)
-      needanotherpass = dependant = 1;
+      needanotherpass = true;
+      dependant = 1;
       if (lastchance)
       { //only show error once we're certain label will never exist
         errmsg = UnknownLabel;
@@ -1135,8 +1123,6 @@ void export_labelfiles()
 {
   // iterate through all the labels and output FCEUX-compatible label info files
   // based on their type (LABEL's,EQUATE's,VALUE's), address (ram/rom), and position (bank)
-
-  int i;
   int bank;
   label *l;
   char str[512];
@@ -1145,7 +1131,7 @@ void export_labelfiles()
   FILE *ramfile;
   char *strptr;
 
-  for (i = 0; i < 64; i++)
+  for (int i = 0; i < 64; i++)
   {
     bankfiles[i] = 0;
   }
@@ -1174,9 +1160,8 @@ void export_labelfiles()
 
   // todo: include EQUATES for other registers and variables
 
-  for (i = labelstart; i <= labelend; i++)
+  for (const label *l : labellist)
   {
-    l = labellist[i];
 
     // [freem addition]: handle IGNORENL'd labels
     if (l->ignorenl)
@@ -1212,19 +1197,16 @@ void export_labelfiles()
 
   fclose(ramfile);
 
-  for (i = 0; i < 64; i++)
+  for (int i = 0; i < 64; i++)
   {
     if (bankfiles[i])
       fclose(bankfiles[i]);
   }
 }
 
+// iterate through all the labels and output Lua-compatible label info files
 void export_lua()
 {
-  // iterate through all the labels and output Lua-compatible label info files
-
-  int i;
-  label *l;
   char str[512];
   char filename[512];
   FILE *mainfile;
@@ -1241,16 +1223,11 @@ void export_lua()
 
   mainfile = fopen(filename, "w");
 
-  for (i = labelstart; i <= labelend; i++)
+  for (const label *l : labellist)
   {
-    l = labellist[i];
 
-    if (
-        (
-            l->type == LABEL ||
-            ((l->type == EQUATE || l->type == VALUE) && strlen(l->name) > 1))
-        // no anonymous labels
-        && l->name[0] != '-' && l->name[0] != '+')
+    if ((l->type == LABEL || ((l->type == EQUATE || l->type == VALUE) && strlen(l->name) > 1)) &&
+        l->name[0] != '-' && l->name[0] != '+') // no anonymous labels
     {
       sprintf(str, "%s = 0x%04X\n", l->name, (unsigned int)l->value);
       fwrite((const void *)str, 1, strlen(str), mainfile);
@@ -1290,11 +1267,11 @@ int comparecomments(const void *arg1, const void *arg2)
   return strcmp(a->text, b->text);
 }
 
+// iterate through all the labels and output Mesen-compatible label files
+// based on their type (LABEL's,EQUATE's,VALUE's) and address (ram/rom)
 void export_mesenlabels()
 {
-  // iterate through all the labels and output Mesen-compatible label files
-  // based on their type (LABEL's,EQUATE's,VALUE's) and address (ram/rom)
-  int i;
+
   char *commenttext;
   label *l;
   char str[512];
@@ -1316,25 +1293,21 @@ void export_mesenlabels()
 
   int currentcomment = 0;
 
-  qsort(labellist + labelstart, labelend - labelstart + 1, sizeof(label *), comparelabels);
+  std::sort(labellist.begin(), labellist.end(), comparelabels);
   qsort(comments, commentcount, sizeof(comment *), comparecomments);
 
-  for (i = labelstart; i <= labelend; i++)
+  for (const label *l : labellist)
   {
-    l = labellist[i];
 
-    if (l->value >= 0x10000 || l->name[0] == '+' || l->name[0] == '-' || l->value < 0)
-    {
-      //Ignore CHR & anonymous code labels
+    if (l->value >= 0x10000 || l->value < 0 || l->name[0] == '+' || l->name[0] == '-')
+    { //Ignore CHR & anonymous code labels
       continue;
     }
 
     if (l->type == LABEL)
-    {
-      //Labels in the actual code
+    { //Labels in the actual code
       if (l->pos < 16)
-      {
-        //Ignore file header
+      { //Ignore file header
         continue;
       }
 
@@ -1428,7 +1401,7 @@ void addlabel(char *word, int local)
     labelhere->type = LABEL; //assume it's a label.. could mutate into something else later
     labelhere->pass = pass;
     labelhere->value = addr;
-    labelhere->line = static_cast<char *>(ptr_from_bool(addr >= 0));
+    labelhere->line = reinterpret_cast<char *>(addr >= 0 ? true_ptr : nullptr);
     labelhere->used = 0;
 
     // [freem edit (from asm6_sonder.c)]
@@ -1464,13 +1437,13 @@ void addlabel(char *word, int local)
       {
         if (p->value != addr && c != '-')
         {
-          needanotherpass = 1; //label position is still moving around
+          needanotherpass = true; //label position is still moving around
           if (lastchance)
             errmsg = BadAddr;
         }
         p->value = addr;
         p->pos = filepos;
-        p->line = static_cast<char *>(ptr_from_bool(addr >= 0));
+        p->line = reinterpret_cast<char *>(addr >= 0 ? true_ptr : nullptr);
         if (lastchance && addr < 0)
           errmsg = BadAddr;
       }
@@ -1483,37 +1456,28 @@ void initlabels(void)
 {
   label *p;
 
-  labels = 1;
-  labellist = (label **)my_malloc(INITLISTSIZE * sizeof(label *));
-  labelstart = INITLISTSIZE / 2;
-  labelend = labelstart;
-  maxlabels = INITLISTSIZE;
-  labellist[labelstart] = &firstlabel; //'$' label
+  labellist = std::vector<label *>();
+  labellist.push_back(&firstlabel); //'$' label
 
   //add reserved words to label list
-
-  int i = 0;
-  do
-  {                                                                              //opcodes first
-    findlabel(const_cast<char *>(static_cast<const char *>(reserved_words[i]))); //must call findlabel before using newlabel
+  for (const auto &word : mnemonics)
+  {                        //opcodes first
+    findlabel(word.first); // must call findlabel before using newlabel
     p = newlabel();
-    p->name = static_cast<const char *>(reserved_words[i]);
+    p->name = word.first;
     p->value = (ptrdiff_t)opcode;
-    p->line = const_cast<char *>(static_cast<const char *>(reserved_words[i + 1]));
+    p->line = const_cast<char *>(reinterpret_cast<const char *>(word.second));
     p->type = RESERVED;
-    i += 2;
-  } while (reserved_words[i]);
+  }
 
-  i = 0;
-  do
+  for (const auto &directive : directives)
   { //other reserved words now
-    findlabel(const_cast<char *>(directives[i].name));
+    findlabel(const_cast<char *>(directive.name));
     p = newlabel();
-    p->name = directives[i].name;
-    p->value = (ptrdiff_t)directives[i].func;
+    p->name = directive.name;
+    p->value = (ptrdiff_t)directive.func;
     p->type = RESERVED;
-    i++;
-  } while (directives[i].name);
+  }
   lastlabel = p;
 }
 
@@ -1582,24 +1546,22 @@ void addcomment(char *text)
   }
 }
 
-//find label with this name
-//returns label* if found (and scope/etc is correct), returns NULL if nothing found
-//if name wasn't found, findindex points to where name would be inserted (name<labellist[findindex])
-//if name was found but with wrong scope/whatever, findcmp=0.
+//find label with this label_name
+//returns label* if found (and scope/etc is correct), returns nullptr if nothing found
+//if label_name wasn't found, findindex points to where label_name would be inserted (label_name<labellist[findindex])
+//if label_name was found but with wrong scope/whatever, findcmp=0.
 //don't call if list is empty!
 int findcmp;   //(these are used by newlabel)
 int findindex; //.
-label *findlabel(char *name)
+label *findlabel(const char *label_name)
 {
-  int head, tail;
-  label *p, *global;
 
-  head = labelstart;
-  tail = labelend;
-  findindex = labelstart + labels / 2;
+  int head = 0;
+  int tail = labellist.size() - 1;
+  findindex = labellist.size() / 2;
   do
   { //assume list isn't empty
-    findcmp = strcmp(name, (labellist[findindex])->name);
+    findcmp = strcmp(label_name, labellist.at(findindex)->name);
     if (findcmp < 0)
     {
       tail = findindex - 1;
@@ -1615,13 +1577,13 @@ label *findlabel(char *name)
   {
     if (findcmp < 0)
       findindex++; //position findindex so the label it points to needs to shift right
-    return 0;
+    return nullptr;
   }
-  p = labellist[findindex];
+  label *p = labellist[findindex];
 
   //check scope: label only visible if p.scope=(scope or 0)
-  global = 0;
-  if (*name == '+')
+  label *global = nullptr;
+  if (*label_name == '+')
   { //forward labels need special treatment :P
     do
     {
@@ -1639,7 +1601,7 @@ label *findlabel(char *name)
   {
     do
     {
-      if (!p->scope)
+      if (p->scope == 0)
         global = p;
       if (p->scope == scope)
         return p;
@@ -1649,71 +1611,29 @@ label *findlabel(char *name)
   return global; //return global label only if no locals were found
 }
 
-//double list capacity
-void growlist(void)
-{
-  label **tmp;
-  int newhead;
-
-  maxlabels <<= 1;
-  newhead = maxlabels / 2 - labels / 2;
-  tmp = (label **)my_malloc(maxlabels * sizeof(label *));
-  memcpy(tmp + newhead, labellist + labelstart, labels * sizeof(label *));
-  free(labellist);
-  labellist = tmp;
-  findindex = findindex - labelstart + newhead;
-  labelstart = newhead;
-  labelend = newhead + labels - 1;
-}
-
 //make new empty label and add it to list using result from last findlabel
 //ONLY use after calling findlabel
-label *newlabel(void)
+label *newlabel()
 {
-  label **start, **end;
-  label *p;
-
-  p = (label *)my_malloc(sizeof(label));
-  p->link = 0;
+  label *p = (label *)my_malloc(sizeof(label));
+  p->link = nullptr;
   p->scope = 0;
   p->name = 0;
 
   if (!findcmp)
   {                                       //new label with same name
     p->name = labellist[findindex]->name; //share old name
-                                          //if(!scope) {//global always goes at the end
-                                          //  lastfindlink->link=p;//add to the chain..
-                                          //} else {//insert into the front
     p->link = labellist[findindex];
     labellist[findindex] = p;
-    //}
     return p;
   }
-  if (!labelstart || labelend >= maxlabels - 1) //make sure there's room to add
-    growlist();
 
-  end = &labellist[findindex];
-  if (findindex > (labelstart + labels / 2))
-  { //shift up
-    start = &labellist[labelend];
-    for (; start >= end; start--)
-      *(start + 1) = *start;
-    labelend++;
-  }
-  else
-  { //shift down
-    end--;
-    start = &labellist[labelstart];
-    for (; start <= end; start++)
-      *(start - 1) = *start;
-    labelstart--;
-  }
-  *end = p;
-  labels++;
+  labellist.insert(labellist.begin() + findindex, p);
   return p;
 }
 
-//==============================================================================================================
+// why's this line here?
+//==============================================================================
 
 void showerror(char *errsrc, int errline)
 {
@@ -1783,7 +1703,8 @@ void processline(char *src, char *errsrc, int errline)
     showerror(errsrc, errline);
   }
   else
-    do
+  {
+    do // ????????
     {
       if (makemacro)
       { //we're inside a macro definition
@@ -1819,7 +1740,8 @@ void processline(char *src, char *errsrc, int errline)
           if (p->value == (ptrdiff_t)endm)
             makemacro = 0;
         break;
-      } //makemacro
+      }
+      
       if (reptcount)
       { //REPT definition is in progress?
         p = getreserved(&s);
@@ -1848,6 +1770,7 @@ void processline(char *src, char *errsrc, int errline)
             }
           }
         }
+
         if (reptcount || endmac)
         { //add this line to REPT body
           if (comment)
@@ -1863,10 +1786,12 @@ void processline(char *src, char *errsrc, int errline)
         }
         break;
       }
+
       labelhere = 0; //for non-label symbol definitions (EQU,=,etc)
       s2 = s;
       p = getreserved(&s);
       errmsg = 0;
+
       if (skipline[iflevel])
       { //conditional assembly.. no code generation
         if (!p)
@@ -1875,7 +1800,12 @@ void processline(char *src, char *errsrc, int errline)
           if (!p)
             break;
         }
-        if (p->value != (ptrdiff_t)else_ && p->value != (ptrdiff_t)elseif && p->value != (ptrdiff_t)endif && p->value != (ptrdiff_t)if_ && p->value != (ptrdiff_t)ifdef && p->value != (ptrdiff_t)ifndef)
+        if (p->value != (ptrdiff_t)else_ &&
+            p->value != (ptrdiff_t)elseif &&
+            p->value != (ptrdiff_t)endif &&
+            p->value != (ptrdiff_t)if_ &&
+            p->value != (ptrdiff_t)ifdef &&
+            p->value != (ptrdiff_t)ifndef)
           break;
       }
       if (!p)
@@ -1899,12 +1829,13 @@ void processline(char *src, char *errsrc, int errline)
         if (*s)
           errmsg = "Extra characters on line.";
       }
-    badlabel:
+    badlabel: //TODO what the hell is this?
       if (errmsg)
       {
         showerror(errsrc, errline);
       }
     } while (0);
+  }
 }
 
 void showhelp(void)
@@ -1925,7 +1856,7 @@ void showhelp(void)
   puts("See README.TXT for more info.\n");
 }
 
-//--------------------------------------------------------------------------------------------
+//----------------------------------------------------------------------------//
 
 int main(int argc, char **argv)
 {
@@ -2040,7 +1971,7 @@ int main(int argc, char **argv)
   }
 
   if (listfilename == true_ptr)
-  { //if listfile was wanted but no name was specified, use srcfile.LST
+  { //if listfile was wanted but no name was specified, use srcfile.lst
     strcpy(nameptr, ".lst");
     listfilename = my_strdup(str);
   }
@@ -2075,12 +2006,12 @@ int main(int argc, char **argv)
     filepos = 0;
     pass++;
     if (pass == MAXPASSES || (p == lastlabel))
-      lastchance = 1; //give up on too many tries or no progress made
+      lastchance = true; //give up on too many tries or no progress made
     if (lastchance)
       message("last try..\n");
     else
       message("pass %i..\n", pass);
-    needanotherpass = 0;
+    needanotherpass = false;
     skipline[0] = 0;
     scope = 1;
     nextscope = 2;
@@ -2106,7 +2037,7 @@ int main(int argc, char **argv)
     i = ftell(outputfile);
 
     result = fclose(outputfile);
-    outputfile = NULL; // prevent fatal_error() from trying to close file again
+    outputfile = nullptr; // prevent fatal_error() from trying to close file again
     if (result)
       fatal_error("Write error.");
 
@@ -2252,7 +2183,6 @@ char srcbuff[LINEMAX];
 void listline(char *src, char *comment)
 {
   static int oldpass = 0;
-  int i;
   if (!listfilename)
     return;
   if (oldpass != pass)
@@ -2274,6 +2204,7 @@ void listline(char *src, char *comment)
   }
   else
   { //finish previous line
+    int i;
     for (i = 0; i < listcount && i < LISTMAX; i++)
       fprintf(listfile, " %02X", (int)listbuff[i]);
     for (; i < LISTMAX; i++)
@@ -2310,6 +2241,8 @@ void listline(char *src, char *comment)
     message("%s written.\n", listfilename);
   }
 }
+
+// ???
 //------------------------------------------------------
 //directive(label *id, char **next)
 //
@@ -2355,7 +2288,7 @@ void equal(label *id, char **next)
     labelhere->type = VALUE;
     dependant = 0;
     labelhere->value = eval(next, WHOLEEXP);
-    labelhere->line = static_cast<char *>(ptr_from_bool(!dependant));
+    labelhere->line = reinterpret_cast<char *>(!dependant ? true_ptr : nullptr);
   }
 }
 
@@ -2710,7 +2643,7 @@ void opcode(label *id, char **next)
           val -= addr + 2;
           if (val > 127 || val < -128)
           {
-            needanotherpass = 1; //give labels time to sort themselves out
+            needanotherpass = true; //give labels time to sort themselves out
             if (lastchance)
             {
               errmsg = "Branch out of range.";
@@ -3081,20 +3014,16 @@ void ende(label *id, char **next)
 // [freem addition]
 void ignorenl(label *id, char **next)
 {
-  nonl = 1;
+  nonl = true;
 }
 
 // [freem addition]
 void endinl(label *id, char **next)
 {
   if (nonl)
-  {
-    nonl = 0;
-  }
+    nonl = false;
   else
-  {
     errmsg = ExtraENDINL;
-  }
 }
 
 void fillval(label *id, char **next)

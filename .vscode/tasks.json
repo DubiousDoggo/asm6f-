@@ -1,0 +1,47 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "type": "shell",
+            "label": "g++.exe build asm6f++",
+            "command": "C:\\Program Files\\mingw-w64\\x86_64-8.1.0-win32-seh-rt_v6-rev0\\mingw64\\bin\\g++.exe",
+            "args": [
+                "-Wall",
+                "-Wfatal-errors",
+                "--pedantic-errors",
+                "-std=c++11",
+                "${workspaceFolder}\\asm6f++.cpp",
+                "-o",
+                "${workspaceFolder}\\asm6f++.exe"
+            ],
+            "options": {
+                "cwd": "C:\\Program Files\\mingw-w64\\x86_64-8.1.0-win32-seh-rt_v6-rev0\\mingw64\\bin"
+            },
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            "type": "shell",
+            "label": "g++.exe debug build asm6f++",
+            "command": "C:\\Program Files\\mingw-w64\\x86_64-8.1.0-win32-seh-rt_v6-rev0\\mingw64\\bin\\g++.exe",
+            "args": [
+                "-Wall",
+                "-Wfatal-errors",
+                "--pedantic-errors",
+                "-std=c++11",
+                "-g",
+                "${workspaceFolder}\\asm6f++.cpp",
+                "-o",
+                "${workspaceFolder}\\asm6f++.exe"
+            ],
+            "options": {
+                "cwd": "C:\\Program Files\\mingw-w64\\x86_64-8.1.0-win32-seh-rt_v6-rev0\\mingw64\\bin"
+            }
+        }
+    ]
+}
