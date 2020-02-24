@@ -334,6 +334,7 @@ char *inputfilename = nullptr;
 char *outputfilename = nullptr;
 char *listfilename = nullptr;
 char *cdlfilename = nullptr;
+const char *includepath = nullptr;
 bool verboselisting = false;   // expand REPT loops in listing
 bool genfceuxnl = false;       // [freem addition] generate FCEUX .nl files for symbolic debugging
 bool genmesenlabels = false;   // generate label files for use with Mesen
@@ -352,11 +353,11 @@ label *lastlabel; // last label created
 std::vector<comment *> comments;
 int commentcount;
 int lastcommentpos = -1;
-bool nooutput = false;       // supress output (use with ENUM)
-bool nonl = false;           // [freem addition] supress output to .nl files
-byte defaultfiller; // default fill value
-int macrolevel = 0; // number of nested macro/rept being expanded
-bool verbose = true;         // output messages to stdout
+bool nooutput = false; // supress output (use with ENUM)
+bool nonl = false;     // [freem addition] supress output to .nl files
+byte defaultfiller;    // default fill value
+int macrolevel = 0;    // number of nested macro/rept being expanded
+bool verbose = true;   // output messages to stdout
 
 // Prints printf-style message to stderr, then exits.
 // Closes and deletes output file.
@@ -855,36 +856,23 @@ void getword(char *dst, char **src, int mcheck)
     (*src)++; // cheesy fix for rept/macro listing
 }
 
-// grab string with optional quotes
-void getfilename(char *dst, char **next)
+FILE *getfile(const char *fname, const char *args)
 {
-  char *s, *end;
-  int len;
-  eatwhitespace(next);
-  if (**next == '"')
-  { // look for end quote, grab everything inside
-    s = *next + 1;
-    end = strchr(s, '"');
-    if (end)
-    {
-      len = (int)(end - s);
-      memcpy(dst, s, len);
-      dst[len] = 0;
-      *next = end + 1;
-    }
-    else
-    { // no end quote.. grab everything minus trailing whitespace
-      end = strend(s, whitesp);
-      len = (int)(end - s);
-      memcpy(dst, s, len);
-      dst[len] = 0;
-      *next = end;
-    }
+  std::string filename(fname);
+  filename.erase(0, filename.find_first_not_of(" \t\r\n\""));
+  filename.erase(filename.find_last_not_of(" \t\r\n\"") + 1);
+  FILE *f = fopen(filename.c_str(), args);
+  if (!f && includepath != nullptr)
+  { // try with path
+    filename.insert(0, "\\");
+    filename.insert(0, includepath);
+    f = fopen(filename.c_str(), args);
   }
-  else
+  if (!f)
   {
-    getword(dst, next, 0);
+    return nullptr;
   }
+  return f;
 }
 
 // get word in src, advance src, and return reserved label*
@@ -1233,23 +1221,21 @@ void export_lua()
   fclose(mainfile);
 }
 
-int comparelabels(const void *arg1, const void *arg2)
+bool comparelabels(label *&a, label *&b)
 {
-  const label *a = *((label **)arg1);
-  const label *b = *((label **)arg2);
-  if (a->type > b->type)
-    return 1;
   if (a->type < b->type)
-    return -1;
-  if (a->pos > b->pos)
-    return 1;
+    return true;
+  if (a->type > b->type)
+    return false;
   if (a->pos < b->pos)
-    return -1;
-  if (a->value > b->value)
-    return 1;
+    return true;
+  if (a->pos > b->pos)
+    return false;
   if (a->value < b->value)
-    return -1;
-  return strcmp(a->name, b->name);
+    return true;
+  if (a->value > b->value)
+    return false;
+  return strcmp(a->name, b->name) < 0;
 }
 
 int comparecomments(const void *arg1, const void *arg2)
@@ -1267,38 +1253,41 @@ int comparecomments(const void *arg1, const void *arg2)
 // based on their type (LABEL's,EQUATE's,VALUE's) and address (ram/rom)
 void export_mesenlabels()
 {
-  char str[512];
-  char filename[512];
+  std::string filename(outputfilename);
 
-  strcpy(filename, outputfilename);
+  // Strip the extension from output filename
+  size_t extension = filename.rfind('.');
+  if (extension != std::string::npos)
+    if (filename.find('\\', extension) != std::string::npos) // watch out for "dir.ext\file"
+      extension = std::string::npos;
 
-  char *strptr = strrchr(filename, '.'); // strptr ='.'ptr
-  if (strptr)
-    if (strchr(strptr, '\\'))
-      strptr = 0; // watch out for "dirname.ext\listfile"
-  if (!strptr)
-    strptr = filename + strlen(filename); // strptr -> inputfile extension
-  strcpy(strptr, ".mlb");
+  if (extension == std::string::npos)
+    extension = filename.size();
 
-  FILE *outfile = fopen(filename, "w");
+  filename.replace(extension, std::string::npos, ".mlb");
 
-  int currentcomment = 0;
+  FILE *outfile = fopen(filename.c_str(), "w");
 
-  std::sort(labellist.begin(), labellist.end(), comparelabels);
+  std::sort(labellist.begin(), labellist.end(), &comparelabels); // do these need to be sorted?
   std::sort(comments.begin(), comments.end(), comparecomments);
 
+  char str[512];
+  size_t currentcomment = 0;
   for (const label *l : labellist)
   {
-
+    if (l->type != LABEL && l->type != VALUE && l->type != EQUATE)
+    { // Ignore macros and reserved words
+      continue;
+    }
     if (l->value >= 0x10000 || l->value < 0 || l->name[0] == '+' || l->name[0] == '-')
     { // Ignore CHR & anonymous code labels
       continue;
     }
 
     if (l->type == LABEL)
-    { // Labels in the actual code
-      if (l->pos < 16)
-      { // Ignore file header
+    {                  // Labels in the actual code
+      if (l->pos < 16) // TODO - this thows out labels?
+      {                // Ignore file header
         continue;
       }
 
@@ -1349,6 +1338,7 @@ void export_mesenlabels()
       // These are potentially aliases for variables in RAM, or read/write registers, etc.
       if (l->value < 0x2000)
       {
+        // TODO - dont assume
         // Assume nes internal RAM below $2000 (2kb)
         sprintf(str, "R:%04X:%s\n", (unsigned int)l->value, l->name);
       }
@@ -1482,6 +1472,7 @@ void initcomments()
 void addcomment(char *text)
 {
   static unsigned oldpass = 0;
+  int commentcount = comments.size();
   if (oldpass != pass)
   {
     oldpass = pass;
@@ -1774,14 +1765,18 @@ void processline(char *src, char *errsrc, int errline)
             p->value != (ptrdiff_t)if_ &&
             p->value != (ptrdiff_t)ifdef &&
             p->value != (ptrdiff_t)ifndef)
-          break;
+          break; // WHY
       }
       if (!p)
       { // maybe a label?
         if (getlabel(word, &s2))
           addlabel(word, macrolevel);
         if (errmsg)
-          goto badlabel; // fucked up label
+        {
+          showerror(errsrc, errline);
+          return;
+        }
+
         p = getreserved(&s);
       }
       if (p)
@@ -1797,7 +1792,6 @@ void processline(char *src, char *errsrc, int errline)
         if (*s)
           errmsg = "Extra characters on line.";
       }
-    badlabel: // TODO what the hell is this?
       if (errmsg)
       {
         showerror(errsrc, errline);
@@ -1830,7 +1824,6 @@ int main(int argc, char **argv)
 {
   char str[512];
 
-  int notoption;
   char *nameptr;
   label *p;
   FILE *f;
@@ -1842,43 +1835,38 @@ int main(int argc, char **argv)
   }
   initlabels();
   initcomments();
-  notoption = 0;
+  unsigned notoption = 0;
   for (int i = 1; i < argc; i++)
   {
-    if (*argv[i] == '-' || (*argv[i] == '/' && strlen(argv[i]) == 2))
+    if (*argv[i] == '-')
     {
       switch (argv[i][1])
       {
-      case 'h':
+      case '-': // long options
+        if (i + 1 >= argc)
+          fatal_error("missing option for %s", argv[i]);
+        if (strcmp(argv[i], "--path") == 0)
+        {
+          i++;
+          includepath = argv[i];
+        }
+        else
+        {
+          fatal_error("unknown option: %s", argv[i]);
+        }
+        break;
+      case 'h': // display help
       case '?':
-        showhelp();
+        showhelp(); // should this be a failure?
         return EXIT_FAILURE;
-      case 'L':
+      case 'L': // verbose listing
         verboselisting = true;
-      case 'l':
+      case 'l': // generate list file
         listfilename = static_cast<char *>(true_ptr);
         break;
       case 'd':
-        /* freem todo: allow support for defining the symbols;
-           * e.g. asm6 -dMMC=5 (etc.)
-           */
         if (argv[i][2])
         {
-          // freem todo: search for '=' character and split
-          /*
-            const char *arg2 = &argv[i][2];
-            char *symbol, *equals, *value;
-            equals=strchr(arg2,'=');
-            if(equals!=NULL){
-              int ePos = equals-arg2;
-              printf("equals at %d\n",ePos);
-              printf("%s\n",&arg2[ePos]);
-              // strncpy(symbol,arg2,ePos);
-              // symbol[ePos]=0;
-              // printf("%s\n",symbol);
-            }
-            */
-
           if (!findlabel(&argv[i][2]))
           {
             p = newlabel();
@@ -1890,20 +1878,19 @@ int main(int argc, char **argv)
           }
         }
         break;
-      case 'q':
+      case 'q': // quiet
         verbose = false;
         break;
-      // [freem addition]
-      case 'n':
+      case 'n': // generate .nl file
         genfceuxnl = true;
         break;
-      case 'm':
+      case 'm': // generate messen label file
         genmesenlabels = true;
         break;
-      case 'c':
+      case 'c': // generate .cdl file
         gencdl = true;
         break;
-      case 'f':
+      case 'f': // generate lua file
         genlua = true;
         break;
       default:
@@ -2279,14 +2266,9 @@ void nothing(label *id, char **next)
 
 void include(label *id, char **next)
 {
-  char *np;
-  FILE *f;
-
-  np = *next;
-  reverse(tmpstr, np + strspn(np, whitesp2)); // eat whitesp off both ends
-  reverse(np, tmpstr + strspn(tmpstr, whitesp2));
-    np = const_cast<char*path.c_str();
-  if (!f)
+  char *np = *next;
+  FILE *f = getfile(np, "r+"); // read as text, the + makes recursion not possible
+  if (f == nullptr)
   {
     errmsg = CantOpen;
     error = true;
@@ -2295,65 +2277,72 @@ void include(label *id, char **next)
   {
     processfile(f, np);
     fclose(f);
-    errmsg = 0; // let main() know file was ok
+    errmsg = nullptr; // let `main` know file was ok
   }
   *next = np + strlen(np); // need to play safe because this could be the main srcfile
 }
 
 void incbin(label *id, char **next)
 {
-  int filesize, seekpos, bytesleft, i;
-  FILE *f = 0;
-
-  do
+  FILE *f = getfile(*next, "rb");
+  if (f == nullptr)
   {
-    // file open:
-    getfilename(tmpstr, next);
-    if (!(f = fopen(tmpstr, "rb")))
-    {
-      errmsg = CantOpen;
-      break;
-    }
-    fseek(f, 0, SEEK_END);
-    filesize = ftell(f);
-    // file seek:
-    seekpos = 0;
-    if (eatchar(next, ','))
-      seekpos = eval(next, WHOLEEXP);
+    errmsg = CantOpen;
+    return;
+  }
+
+  fseek(f, 0, SEEK_END);
+  int filesize = ftell(f);
+
+  int seekpos = 0;
+  if (eatchar(next, ','))
+    seekpos = eval(next, WHOLEEXP);
+  if (!errmsg && !dependant)
+    if (seekpos < 0 || seekpos > filesize)
+      errmsg = SeekOutOfRange;
+  if (errmsg)
+  {
+    if (f)
+      fclose(f);
+    return;
+  }
+  fseek(f, seekpos, SEEK_SET);
+  // get size:
+  int bytesleft;
+  if (eatchar(next, ','))
+  {
+    bytesleft = eval(next, WHOLEEXP);
     if (!errmsg && !dependant)
-      if (seekpos < 0 || seekpos > filesize)
-        errmsg = SeekOutOfRange;
+      if (bytesleft < 0 || bytesleft > (filesize - seekpos))
+        errmsg = BadIncbinSize;
     if (errmsg)
-      break;
-    fseek(f, seekpos, SEEK_SET);
-    // get size:
-    if (eatchar(next, ','))
     {
-      bytesleft = eval(next, WHOLEEXP);
-      if (!errmsg && !dependant)
-        if (bytesleft < 0 || bytesleft > (filesize - seekpos))
-          errmsg = BadIncbinSize;
-      if (errmsg)
-        break;
+      if (f)
+        fclose(f);
+      return;
     }
+  }
+  else
+  {
+    bytesleft = filesize - seekpos;
+  }
+  // read file:
+  int i;
+  while (bytesleft)
+  {
+    if (bytesleft > BUFFSIZE)
+      i = BUFFSIZE;
     else
-    {
-      bytesleft = filesize - seekpos;
-    }
-    // read file:
-    while (bytesleft)
-    {
-      if (bytesleft > BUFFSIZE)
-        i = BUFFSIZE;
-      else
-        i = bytesleft;
-      fread(inputbuff, 1, i, f);
-      output(inputbuff, i, DATA);
-      bytesleft -= i;
-    }
-  } while (0);
+      i = bytesleft;
+    fread(inputbuff, 1, i, f);
+    output(inputbuff, i, DATA);
+    bytesleft -= i;
+  }
+
   if (f)
     fclose(f);
+
+  *next += strlen(*next);
 }
 
 void hex(label *id, char **next)

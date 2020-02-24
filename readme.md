@@ -431,7 +431,7 @@ The alternate `$EB` opcode for `sbc #{immediate}` is not supported.
 
     lax {addrmode} = lda {addrmode} + ldx {addrmode}
 
-## DCP (Decrement, Compare)
+### DCP (Decrement, Compare)
 
     dcp {addrmode} = dec {addrmode} + cmp {addrmode}
 
