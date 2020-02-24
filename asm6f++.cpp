@@ -17,28 +17,28 @@ static void *true_ptr = &true_ptr;
 
 label firstlabel = {
     // '$' label
-    "$",               //*name
-    0,                 //value
-    0,                 //[freem edit (from asm6_sonder.c)] pos
-    (char *)&true_ptr, //*line
-    VALUE,             //type
-    0,                 //used
-    0,                 //pass
-    0,                 //scope
-    0,                 //[freem addition] ignorenl
-    0,                 //link
+    "$",               // *name
+    0,                 // value
+    0,                 // pos
+    (char *)&true_ptr, // *line
+    VALUE,             // type
+    false,             // used
+    0,                 // pass
+    0,                 // scope
+    false,             // ignorenl
+    nullptr,           // link
 };
 
-//unstable instruction allowance
-int allowunstable = 0;
-int allowhunstable = 0;
+bool allowunstable = false;  // allow unstable instrucitons
+bool allowhunstable = false; // allow highly unstable instruction
 
 //[nicklausw] ines stuff
-int ines_include = 0;
+bool ines_include = false;
 int inesprg_num = 0;
 int ineschr_num = 0;
 int inesmir_num = 0;
 int inesmap_num = 0;
+
 int use_nes2 = 0;
 int nes2chr_num = 0;
 int nes2prg_num = 0;
@@ -52,7 +52,7 @@ int nes2chrbram_num = 0;
 // [freem addition (from asm6_sonder.c)]
 int filepos = 0;
 
-const int opsize[] = {0, 1, 2, 1, 1, 1, 1, 2, 2, 1, 2, 1, 0};
+const unsigned opsize[] = {0, 1, 2, 1, 1, 1, 1, 2, 2, 1, 2, 1, 0};
 const char ophead[] = {0, '#', '(', '(', '(', 0, 0, 0, 0, 0, 0, 0, 0};
 const char *optail[] = {"A", "", ")", ",X)", "),Y", ",X", ",Y", ",X", ",Y", "", "", "", ""};
 
@@ -312,52 +312,51 @@ const char NoENDINL[] = "Missing ENDINL.";
 const char IfNestLimit[] = "Too many nested IFs.";
 const char UndefinedPC[] = "PC is undefined (use ORG first)";
 
-const char whitesp[] = " \t\r\n:";   //treat ":" like whitespace (for labels)
-const char whitesp2[] = " \t\r\n\""; //(used for filename processing)
+const char whitesp[] = " \t\r\n:";   // treat ":" like whitespace (for labels)
+const char whitesp2[] = " \t\r\n\""; // (used for filename processing)
 
-char tmpstr[LINEMAX]; //all purpose big string
+char tmpstr[LINEMAX]; // all purpose big string
 
-int pass = 0;
-int scope;               //current scope, 0=global
-int nextscope;           //next nonglobal scope (increment on each new block of localized code)
+unsigned pass = 0;
+unsigned scope;          //current scope, 0=global
+unsigned nextscope;      //next nonglobal scope (increment on each new block of localized code)
 bool lastchance = false; //set on final attempt
 bool needanotherpass;    //still need to take care of some things..
 bool error = false;      //hard error (stop assembly after this pass)
 char **makemacro = 0;    //(during macro creation) where next macro line will go.  1 to skip past macro
 char **makerept;         //like makemacro.. points to end of string chain
 int reptcount = 0;       //counts rept statements during rept string storage
-int iflevel = 0;         //index into ifdone[],skipline[]
+unsigned iflevel = 0;    //index into ifdone[],skipline[]
 int ifdone[IFNESTS];     //nonzero if current IF level has been true
 int skipline[IFNESTS];   //1 on an IF statement that is false
 const char *errmsg;
-char *inputfilename = 0;
-char *outputfilename = 0;
-char *listfilename = 0;
-char *cdlfilename = 0;
-int verboselisting = 0;  //expand REPT loops in listing
-int genfceuxnl = 0;      //[freem addition] generate FCEUX .nl files for symbolic debugging
-int genmesenlabels = 0;  //generate label files for use with Mesen
-int gencdl = 0;          //generate CDL file
-int genlua = 0;          //generate lua symbol file
-const char *listerr = 0; //error message for list file
-label *labelhere;        //points to the label being defined on the current line (for EQU, =, etc)
-FILE *listfile = 0;
-FILE *outputfile = 0;
-FILE *cdlfile = 0;
+char *inputfilename = nullptr;
+char *outputfilename = nullptr;
+char *listfilename = nullptr;
+char *cdlfilename = nullptr;
+bool verboselisting = false;   // expand REPT loops in listing
+bool genfceuxnl = false;       // [freem addition] generate FCEUX .nl files for symbolic debugging
+bool genmesenlabels = false;   // generate label files for use with Mesen
+bool gencdl = false;           // generate CDL file
+bool genlua = false;           // generate lua symbol file
+const char *listerr = nullptr; // error message for list file
+label *labelhere;              // points to the label being defined on the current line (for EQU, =, etc)
+FILE *listfile = nullptr;
+FILE *outputfile = nullptr;
+FILE *cdlfile = nullptr;
 byte outputbuff[BUFFSIZE];
 byte inputbuff[BUFFSIZE];
-int outcount; //bytes waiting in outputbuff
+int outcount; // bytes waiting in outputbuff
 std::vector<label *> labellist;
-label *lastlabel; //last label created
-comment **comments;
+label *lastlabel; // last label created
+std::vector<comment *> comments;
 int commentcount;
-int commentcapacity;
 int lastcommentpos = -1;
-int nooutput = 0;    //supress output (use with ENUM)
-bool nonl = false;   //[freem addition] supress output to .nl files
-int defaultfiller;   //default fill value
-int insidemacro = 0; //macro/rept is being expanded
-int verbose = 1;
+bool nooutput = false;       // supress output (use with ENUM)
+bool nonl = false;           // [freem addition] supress output to .nl files
+byte defaultfiller; // default fill value
+int macrolevel = 0; // number of nested macro/rept being expanded
+bool verbose = true;         // output messages to stdout
 
 // Prints printf-style message to stderr, then exits.
 // Closes and deletes output file.
@@ -420,14 +419,13 @@ static char *my_strdup(const char *in)
 // ours in all cases.
 char *my_strupr(char *string)
 {
-  char *s;
 
   if (string == nullptr)
   {
     return nullptr;
   }
 
-  for (s = string; *s; ++s)
+  for (char *s = string; *s != '\0'; s++)
   {
     *s = toupper((unsigned char)*s);
   }
@@ -894,7 +892,6 @@ label *getreserved(char **src)
 {
   char dst[WORDMAX];
   char upp[WORDMAX];
-  label *p;
 
   *src += strspn(*src, whitesp); // eatwhitespace
   if (**src == '=')
@@ -912,21 +909,26 @@ label *getreserved(char **src)
     my_strupr(upp);
   }
 
-  p = findlabel(upp); //case insensitive reserved word
-  if (!p)
-    p = findlabel(dst); //or case sensitive macro
-  if (p)
+  label *p = findlabel(upp); // case insensitive reserved word
+  if (p == nullptr)
+    p = findlabel(dst); // or case sensitive macro
+
+  if (p != nullptr)
   {
     if (p->type == MACRO)
     {
       if (p->pass != pass)
-        p = 0;
+        p = nullptr;
     }
     else if (p->type != RESERVED)
-      p = 0;
+    {
+      p = nullptr;
+    }
   }
-  if (!p)
+
+  if (p == nullptr)
     errmsg = Illegal;
+
   return p;
 }
 
@@ -969,12 +971,12 @@ int getlabel(char *dst, char **src)
 char *expandline(char *dst, char *src)
 {
   char *start;
-  char *comment = 0;
+  char *comment = nullptr;
   char c, c2;
-  label *p;
-  int def_skip = 0;
+
   char upp[WORDMAX];
 
+  bool def_skip = false;
   do
   {
     c = *src;
@@ -1017,7 +1019,7 @@ char *expandline(char *dst, char *src)
         c = *src;
       } while (c == '_' || c == '.' || c == LOCALCHAR || (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'));
 
-      *src = 0; //terminate @ end of word (temporarily)
+      *src = '\0'; // terminate @ end of word (temporarily)
 
       /*
       ghey hack.
@@ -1034,14 +1036,14 @@ char *expandline(char *dst, char *src)
       rendering IFDEF useless, so we will bypass expansion in this special case.
       I'm avoiding getreserved() because it does searching and other unnecessary crap.
       */
-      p = 0;
+      label *p = nullptr;
       if (!def_skip)
       {
         strcpy(upp, start + (*start == '.'));
         my_strupr(upp);
         if (!strcmp(upp, "IFDEF") || !strcmp(upp, "IFNDEF"))
         {
-          def_skip = 1;
+          def_skip = true;
         }
         else
         {
@@ -1049,24 +1051,24 @@ char *expandline(char *dst, char *src)
         }
       }
 
-      if (p)
+      if (p != nullptr)
       {
-        if (p->type != EQUATE || p->pass != pass) //equates MUST be defined before being used otherwise they will be expanded in their own definition
-          p = 0;                                  //i.e. (label equ whatever) gets translated to (whatever equ whatever)
+        if (p->type != EQUATE || p->pass != pass) // equates MUST be defined before being used otherwise they will be expanded in their own definition
+          p = nullptr;                            // i.e. (label equ whatever) gets translated to (whatever equ whatever)
         else
         {
           if (p->used)
           {
-            p = 0;
+            p = nullptr;
             errmsg = RecurseEQU;
           }
         }
       }
-      if (p)
+      if (p != nullptr)
       {
-        p->used = 1;
+        p->used = true;
         expandline(dst, p->line);
-        p->used = 0;
+        p->used = false;
       }
       else
       {
@@ -1078,15 +1080,16 @@ char *expandline(char *dst, char *src)
     else
     {
       if (c == ';')
-      { //comment
-        c = 0;
+      { // comment
+        c = '\0';
         comment = src;
       }
       *dst = c;
       dst++;
       src++;
     }
-  } while (c);
+  } while (c != '\0');
+
   return comment;
 }
 
@@ -1257,7 +1260,7 @@ int comparecomments(const void *arg1, const void *arg2)
     return 1;
   if (a->pos < b->pos)
     return -1;
-  return strcmp(a->text, b->text);
+  return strcmp(a->text.c_str(), b->text.c_str());
 }
 
 // iterate through all the labels and output Mesen-compatible label files
@@ -1282,7 +1285,7 @@ void export_mesenlabels()
   int currentcomment = 0;
 
   std::sort(labellist.begin(), labellist.end(), comparelabels);
-  qsort(comments, commentcount, sizeof(comment *), comparecomments);
+  std::sort(comments.begin(), comments.end(), comparecomments);
 
   for (const label *l : labellist)
   {
@@ -1300,7 +1303,7 @@ void export_mesenlabels()
       }
 
       //Check if one or more comments match this address
-      char *commenttext = nullptr;
+      const char *commenttext = nullptr;
       while (currentcomment < commentcount)
       {
         comment *c = comments[currentcomment];
@@ -1312,7 +1315,7 @@ void export_mesenlabels()
           {
             sprintf(str, "P:%04X::", (unsigned int)c->pos - 16);
             fwrite((const void *)str, 1, strlen(str), outfile);
-            fwrite((const void *)c->text, 1, strlen(c->text), outfile);
+            fwrite((const void *)c->text.c_str(), 1, strlen(c->text.c_str()), outfile);
             fwrite("\n", 1, 1, outfile);
           }
           currentcomment++;
@@ -1320,7 +1323,7 @@ void export_mesenlabels()
         else if (c->pos == l->pos)
         {
           //Same address, write it on the same line as the label
-          commenttext = c->text;
+          commenttext = c->text.c_str();
           currentcomment++;
           break;
         }
@@ -1392,7 +1395,7 @@ void addlabel(char *word, bool local)
     labelhere->pass = pass;
     labelhere->value = addr;
     labelhere->line = reinterpret_cast<char *>(addr >= 0 ? true_ptr : nullptr);
-    labelhere->used = 0;
+    labelhere->used = false;
 
     // [freem edit (from asm6_sonder.c)]
     labelhere->pos = filepos;
@@ -1473,26 +1476,12 @@ void initlabels()
 
 void initcomments()
 {
-  commentcount = 0;
-  commentcapacity = 1000;
-  comments = (comment **)my_malloc(commentcapacity * sizeof(comment *));
-}
-
-void growcommentlist()
-{
-  if (commentcount == commentcapacity)
-  {
-    void *oldcomments = comments;
-    commentcapacity *= 2;
-    comments = (comment **)my_malloc(commentcapacity * sizeof(comment *));
-    memcpy(comments, oldcomments, commentcount * sizeof(comment *));
-    free(oldcomments);
-  }
+  comments = std::vector<comment *>();
 }
 
 void addcomment(char *text)
 {
-  static int oldpass = 0;
+  static unsigned oldpass = 0;
   if (oldpass != pass)
   {
     oldpass = pass;
@@ -1503,33 +1492,22 @@ void addcomment(char *text)
 
   if (lastcommentpos == filepos)
   {
-    //Append comment to the previous comment, since they are for the same address
-    comment *c = comments[commentcount - 1];
-    char *oldtext = c->text;
-    int oldtextlen = strlen(oldtext);
-    char *newtext = my_malloc(oldtextlen + strlen(text) + 4);
-    strcpy(newtext, oldtext);
-    strcpy(newtext + oldtextlen, "\\n");
+    // Append comment to the previous comment, since they are for the same address
+    comment *c = comments.at(commentcount - 1);
 
-    //Get rid of last character (newline \n)
-    strcpy(newtext + oldtextlen + 2, text);
-    newtext[strlen(newtext) - 1] = '\0';
-    c->text = newtext;
+    c->text += text;
   }
   else
   {
-    //Add a new comment
-    growcommentlist();
-
-    comment *c = (comment *)my_malloc(sizeof(comment));
+    // Add a new comment
+    comment *c = new comment;
     c->pos = filepos;
-    c->text = my_malloc(strlen(text) + 1);
-    strcpy(c->text, text);
+    c->text = std::string(text);
 
-    //Get rid of last character (newline \n)
-    c->text[strlen(text) - 1] = '\0';
+    // Get rid of last character (newline \n)
+    c->text.pop_back();
 
-    comments[commentcount] = c;
+    comments.at(commentcount) = c;
     commentcount++;
 
     lastcommentpos = filepos;
@@ -1654,7 +1632,7 @@ void processfile(FILE *f, char *name)
   if (!nest)
   { // if main source file (not included)
     errmsg = 0;
-    if (iflevel)
+    if (iflevel != 0)
       errmsg = NoENDIF;
     if (reptcount)
       errmsg = NoENDR;
@@ -1684,7 +1662,7 @@ void processline(char *src, char *errsrc, int errline)
 
   errmsg = 0;
   comment = expandline(line, src);
-  if (!insidemacro || verboselisting)
+  if (!macrolevel || verboselisting)
     listline(line, comment);
 
   s = line;
@@ -1708,7 +1686,7 @@ void processline(char *src, char *errsrc, int errline)
         if (p)
           if (p->value == (ptrdiff_t)endm)
           {
-            comment = 0;
+            comment = nullptr;
             if (endmac)
             {
               endmac[0] = '\n';
@@ -1719,8 +1697,8 @@ void processline(char *src, char *errsrc, int errline)
           }
         if (makemacro && makemacro != true_ptr)
         {
-          if (comment)
-            strcat(line, comment); //keep comment for listing
+          if (comment != nullptr)
+            strcat(line, comment); // keep comment for listing
           *makemacro = my_malloc(strlen(line) + sizeof(char *) + 1);
           makemacro = (char **)*makemacro;
           *makemacro = 0;
@@ -1751,7 +1729,7 @@ void processline(char *src, char *errsrc, int errline)
           {
             if (!(--reptcount))
             {
-              comment = 0;
+              comment = nullptr;
               if (endmac)
               {
                 endmac[0] = '\n'; // hide "ENDR" in case of "label: ENDR"
@@ -1762,9 +1740,9 @@ void processline(char *src, char *errsrc, int errline)
         }
 
         if (reptcount || endmac)
-        { //add this line to REPT body
-          if (comment)
-            strcat(line, comment); //keep comment for listing
+        { // add this line to REPT body
+          if (comment != nullptr)
+            strcat(line, comment); // keep comment for listing
           *makerept = my_malloc(strlen(line) + sizeof(char *) + 1);
           makerept = (char **)*makerept;
           *makerept = 0;
@@ -1801,7 +1779,7 @@ void processline(char *src, char *errsrc, int errline)
       if (!p)
       { // maybe a label?
         if (getlabel(word, &s2))
-          addlabel(word, insidemacro);
+          addlabel(word, macrolevel);
         if (errmsg)
           goto badlabel; // fucked up label
         p = getreserved(&s);
@@ -1851,7 +1829,8 @@ void showhelp(void)
 int main(int argc, char **argv)
 {
   char str[512];
-  int i, notoption;
+
+  int notoption;
   char *nameptr;
   label *p;
   FILE *f;
@@ -1864,7 +1843,7 @@ int main(int argc, char **argv)
   initlabels();
   initcomments();
   notoption = 0;
-  for (i = 1; i < argc; i++)
+  for (int i = 1; i < argc; i++)
   {
     if (*argv[i] == '-' || (*argv[i] == '/' && strlen(argv[i]) == 2))
     {
@@ -1875,7 +1854,7 @@ int main(int argc, char **argv)
         showhelp();
         return EXIT_FAILURE;
       case 'L':
-        verboselisting = 1;
+        verboselisting = true;
       case 'l':
         listfilename = static_cast<char *>(true_ptr);
         break;
@@ -1912,20 +1891,20 @@ int main(int argc, char **argv)
         }
         break;
       case 'q':
-        verbose = 0;
+        verbose = false;
         break;
       // [freem addition]
       case 'n':
-        genfceuxnl = 1;
+        genfceuxnl = true;
         break;
       case 'm':
-        genmesenlabels = 1;
+        genmesenlabels = true;
         break;
       case 'c':
-        gencdl = 1;
+        gencdl = true;
         break;
       case 'f':
-        genlua = 1;
+        genlua = true;
         break;
       default:
         fatal_error("unknown option: %s", argv[i]);
@@ -2024,7 +2003,7 @@ int main(int argc, char **argv)
     if (fwrite(outputbuff, 1, outcount, outputfile) < (size_t)outcount || fflush(outputfile))
       fatal_error("Write error.");
 
-    i = ftell(outputfile);
+    long i = ftell(outputfile);
 
     result = fclose(outputfile);
     outputfile = nullptr; // prevent fatal_error() from trying to close file again
@@ -2063,7 +2042,7 @@ byte listbuff[LISTMAX];
 int listcount;
 void output(byte *p, int size, int cdlflag)
 {
-  static int oldpass = 0;
+  static unsigned oldpass = 0;
   /*  static int noentry=0;
   if(addr<0) {
     if(!noentry) {// do this only once
@@ -2134,7 +2113,7 @@ void output(byte *p, int size, int cdlflag)
                               static_cast<byte>((nes2bram_num << 4) | nes2prg_num),
                               static_cast<byte>((nes2chrbram_num << 4) | nes2chr_num),
                               static_cast<byte>(nes2tv_num),
-                              0, 0, 0};
+                              0x00, 0x00, 0x00};
       if (fwrite(ines_header, 1, 16, outputfile) < (size_t)16 || fflush(outputfile))
         errmsg = "Write error.";
       filepos += 16;
@@ -2172,7 +2151,7 @@ static void output_le(int n, int size, int cdlflag)
 char srcbuff[LINEMAX];
 void listline(char *src, char *comment)
 {
-  static int oldpass = 0;
+  static unsigned oldpass = 0;
   if (!listfilename)
     return;
   if (oldpass != pass)
@@ -2214,8 +2193,8 @@ void listline(char *src, char *comment)
       fprintf(listfile, "\t ");
     else
       fprintf(listfile, "%05X", (int)addr);
-    strcpy(srcbuff, src); //make a copy of the original source line
-    if (comment)
+    strcpy(srcbuff, src); // make a copy of the original source line
+    if (comment != nullptr)
     {
       strcat(srcbuff, comment);
       if (genmesenlabels && filepos > 0 && addr < 0x10000)
@@ -2306,7 +2285,7 @@ void include(label *id, char **next)
   np = *next;
   reverse(tmpstr, np + strspn(np, whitesp2)); // eat whitesp off both ends
   reverse(np, tmpstr + strspn(tmpstr, whitesp2));
-  f = fopen(np, "r+"); // read as text, the + makes recursion not possible
+    np = const_cast<char*path.c_str();
   if (!f)
   {
     errmsg = CantOpen;
@@ -2505,7 +2484,8 @@ void db(label *id, char **next)
 
 void dsw(label *id, char **next)
 {
-  int count, val = defaultfiller;
+  int count;
+  int val = defaultfiller;
   dependant = 0;
   count = eval(next, WHOLEEXP);
   if (dependant || (count < 0 && needanotherpass)) // unknown count! don't do anything
@@ -2589,14 +2569,12 @@ void opcode(label *id, char **next)
 {
   char *s, *s2;
   int type, val = 0;
-  byte *op;
   int oldstate = needanotherpass;
   int forceRel = 0;
 
-  int uns;
   if (!allowunstable)
   {
-    for (uns = 0; uns < 4; uns++)
+    for (int uns = 0; uns < 4; uns++)
     {
       if (!strcmp(id->name, unstablelist[uns]))
       {
@@ -2613,8 +2591,8 @@ void opcode(label *id, char **next)
     }
   }
 
-  for (op = (byte *)id->line; *op != 0xff; op += 2)
-  { //loop through all addressing modes for this instruction
+  for (byte *op = (byte *)id->line; *op != END_BYTE; op += 2)
+  { // loop through all addressing modes for this instruction
     needanotherpass = oldstate;
     strcpy(tmpstr, *next);
     dependant = 0;
@@ -2738,7 +2716,7 @@ void ifndef(label *id, char **next)
 void elseif(label *id, char **next)
 {
   int val;
-  if (iflevel)
+  if (iflevel != 0)
   {
     dependant = 0;
     val = eval(next, WHOLEEXP);
@@ -2761,12 +2739,14 @@ void elseif(label *id, char **next)
     }
   }
   else
+  {
     errmsg = "ELSEIF without IF.";
+  }
 }
 
 void else_(label *id, char **next)
 {
-  if (iflevel)
+  if (iflevel != 0)
     skipline[iflevel] = ifdone[iflevel] || skipline[iflevel - 1];
   else
     errmsg = "ELSE without IF.";
@@ -2774,7 +2754,7 @@ void else_(label *id, char **next)
 
 void endif(label *id, char **next)
 {
-  if (iflevel)
+  if (iflevel != 0)
     --iflevel;
   else
     errmsg = "ENDIF without IF.";
@@ -2858,8 +2838,8 @@ void expandmacro(label *id, char **next, int errline, char *errsrc)
 
   oldscope = scope; // watch those nested macros..
   scope = nextscope++;
-  insidemacro++;
-  id->used = 1;
+  macrolevel++;
+  id->used = true;
   sprintf(macroerr, "%s(%i):%s", errsrc, errline, id->name);
   line = (char **)(id->line);
 
@@ -2923,8 +2903,8 @@ void expandmacro(label *id, char **next, int errline, char *errsrc)
   }
   errmsg = 0;
   scope = oldscope;
-  insidemacro--;
-  id->used = 0;
+  macrolevel--;
+  id->used = false;
 }
 
 int rept_loops;
@@ -2945,12 +2925,12 @@ void expandrept(int errline, char *errsrc)
   char macroerr[WORDMAX * 2]; // source to show in listing (this should be enough, i hope?)
   char **start, **line;
   int linecount;
-  int i, oldscope;
+  int oldscope;
 
   start = (char **)repttext; // first rept data
   oldscope = scope;
-  insidemacro++;
-  for (i = rept_loops; i; --i)
+  macrolevel++;
+  for (int i = rept_loops; i; --i)
   {
     linecount = 0;
     scope = nextscope++;
@@ -2971,7 +2951,7 @@ void expandrept(int errline, char *errsrc)
   }
   errmsg = 0;
   scope = oldscope;
-  insidemacro--;
+  macrolevel--;
 }
 
 int enum_saveaddr;
@@ -2983,7 +2963,7 @@ void enum_(label *id, char **next)
   if (!nooutput)
     enum_saveaddr = addr;
   addr = val;
-  nooutput = 1;
+  nooutput = true;
 }
 
 void ende(label *id, char **next)
@@ -2991,7 +2971,7 @@ void ende(label *id, char **next)
   if (nooutput)
   {
     addr = enum_saveaddr;
-    nooutput = 0;
+    nooutput = false;
   }
   else
   {
@@ -3032,13 +3012,13 @@ void make_error(label *id, char **next)
 
 void unstable(label *id, char **next)
 {
-  allowunstable++;
+  allowunstable = true;
 }
 
 void hunstable(label *id, char **next)
 {
-  allowunstable++;
-  allowhunstable++;
+  allowunstable = true;
+  allowhunstable = true;
 }
 
 // [nicklausw] ines stuff
@@ -3050,7 +3030,7 @@ void inesprg(label *id, char **next)
   if (inesprg_num < 0 || inesprg_num > 0xFF)
     errmsg = OutOfRange;
 
-  ines_include++;
+  ines_include = true;
 }
 
 void ineschr(label *id, char **next)
@@ -3060,7 +3040,7 @@ void ineschr(label *id, char **next)
   if (ineschr_num < 0 || ineschr_num > 0xFF)
     errmsg = OutOfRange;
 
-  ines_include++;
+  ines_include = true;
 }
 
 void inesmir(label *id, char **next)
@@ -3071,7 +3051,7 @@ void inesmir(label *id, char **next)
   if (inesmir_num > 16 || inesmir_num < 0)
     errmsg = OutOfRange;
 
-  ines_include++;
+  ines_include = true;
 }
 
 void inesmap(label *id, char **next)
@@ -3082,7 +3062,7 @@ void inesmap(label *id, char **next)
   if (inesmap_num > 4095 || inesmap_num < 0)
     errmsg = OutOfRange;
 
-  ines_include++;
+  ines_include = true;
 }
 
 void nes2chrram(label *id, char **next)
@@ -3092,7 +3072,7 @@ void nes2chrram(label *id, char **next)
   if (nes2chr_num < 0 || nes2chr_num > 16)
     errmsg = OutOfRange;
 
-  ines_include++;
+  ines_include = true;
   use_nes2 = 1;
 }
 
@@ -3103,7 +3083,7 @@ void nes2prgram(label *id, char **next)
   if (nes2prg_num < 0 || nes2prg_num > 16)
     errmsg = OutOfRange;
 
-  ines_include++;
+  ines_include = true;
   use_nes2 = 1;
 }
 
@@ -3114,7 +3094,7 @@ void nes2sub(label *id, char **next)
   if (nes2sub_num < 0 || nes2sub_num > 16)
     errmsg = OutOfRange;
 
-  ines_include++;
+  ines_include = true;
   use_nes2 = 1;
 }
 
@@ -3135,14 +3115,14 @@ void nes2tv(label *id, char **next)
   if (nes2tv_num > 2 || nes2tv_num < 0)
     errmsg = OutOfRange;
 
-  ines_include++;
+  ines_include = true;
   use_nes2 = 1;
 }
 
 void nes2vs(label *id, char **next)
 {
   nes2vs_num = 1;
-  ines_include++;
+  ines_include = true;
   use_nes2 = 1;
 }
 
@@ -3153,7 +3133,7 @@ void nes2bram(label *id, char **next)
   if (nes2bram_num < 0 || nes2bram_num > 16)
     errmsg = OutOfRange;
 
-  ines_include++;
+  ines_include = true;
   use_nes2 = 1;
 }
 
@@ -3164,6 +3144,6 @@ void nes2chrbram(label *id, char **next)
   if (nes2chrbram_num < 0 || nes2chrbram_num > 16)
     errmsg = OutOfRange;
 
-  ines_include++;
+  ines_include = true;
   use_nes2 = 1;
 }

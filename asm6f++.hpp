@@ -2,6 +2,7 @@
 #define ASM6FPP_HPP
 
 #include <cstdint>
+#include <string>
 
 #define VERSION "1.7"
 
@@ -25,7 +26,7 @@ enum labeltype
   RESERVED, // reserved word (opcode, directive, etc.)
 };
 
-enum cdltypes
+enum cdltype
 {
   NONE = 0,
   CODE = 1,
@@ -67,6 +68,8 @@ enum prectypes
   UNARY,
 };
 
+char mathy[] = "!^&|+-*/%()<>=,";
+
 enum operators
 {
   NOOP,       // no operation
@@ -91,7 +94,7 @@ enum operators
 };
 
 //precedence of each operator
-const char prec[] = {
+const prectypes prec[] = {
     WHOLEEXP,
     EQCOMPARE,
     EQCOMPARE,
@@ -111,7 +114,7 @@ const char prec[] = {
     ORORP,
     SHIFT,
     SHIFT,
-}; 
+};
 
 struct label
 {
@@ -134,17 +137,17 @@ struct label
               //for macros, the first <value> lines hold param names
               //for opcodes (reserved), this holds opcode definitions, see initlabels
 
-  int type;      // labeltypes enum (see above)
-  int used;      // for EQU and MACRO recursion check
-  int pass;      // when label was last defined
-  int scope;     // where visible (0=global, nonzero=local)
-  bool ignorenl; // supress this label from .nl files?
-  label *link;   // labels that share the same name (local labels) are chained together
+  labeltype type; // labeltypes enum (see above)
+  bool used;      // for EQU and MACRO recursion check
+  unsigned pass;  // when label was last defined
+  unsigned scope; // where visible (0=global, nonzero=local)
+  bool ignorenl;  // supress this label from .nl files?
+  label *link;    // labels that share the same name (local labels) are chained together
 };
 
 struct comment
 {
-  char *text;
+  std::string text;
   int pos;
 };
 
