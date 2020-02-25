@@ -15,24 +15,46 @@
 // what even the fuck
 static void *true_ptr = &true_ptr;
 
-label firstlabel = {
-    // '$' label
-    "$",               // *name
-    0,                 // value
-    0,                 // pos
-    (char *)&true_ptr, // *line
-    VALUE,             // type
-    false,             // used
-    0,                 // pass
-    0,                 // scope
-    false,             // ignorenl
-    nullptr,           // link
-};
+unsigned pass = 0;  // current assembly pass
+unsigned scope;     // current scope, 0=global
+unsigned nextscope; // next nonglobal scope (increment on each new block of localized code)
 
+bool lastchance = false; // set on final attempt
+bool needanotherpass;    // still need to take care of some things..
+bool error = false;      // hard error (stop assembly after this pass)
+const char *errmsg;
+
+char **makemacro = 0;  // (during macro creation) where next macro line will go.  1 to skip past macro
+char **makerept;       // like makemacro.. points to end of string chain
+int macrolevel = 0;    // number of nested macro/rept being expanded
+int reptcount = 0;     // counts rept statements during rept string storage
+unsigned iflevel = 0;  // index into ifdone[],skipline[]
+int ifdone[IFNESTS];   // nonzero if current IF level has been true
+int skipline[IFNESTS]; // 1 on an IF statement that is false
+
+char *inputfilename = nullptr;     // input file name
+char *outputfilename = nullptr;    // output file name
+char *listfilename = nullptr;      // list file name
+char *cdlfilename = nullptr;       // cdl file name
+FILE *listfile = nullptr;          // list file pointer
+FILE *outputfile = nullptr;        // output file pointer
+FILE *cdlfile = nullptr;           // cdl file pointer
+const char *includepath = nullptr; // include path for file resolution
+const char *listerr = nullptr;     // error message for list file
+
+// Command line options
+bool verboselisting = false; // expand REPT loops in listing
+bool genfceuxnl = false;     // generate FCEUX .nl files for symbolic debugging
+bool genmesenlabels = false; // generate label files for use with Mesen
+bool gencdl = false;         // generate CDL file
+bool genlua = false;         // generate lua symbol file
+bool verbose = true;         // output messages to stdout
+
+bool nooutput = false;       // supress output (used with ENUM)
+bool nonl = false;           // supress output to .nl files (used with IGNORENL)
 bool allowunstable = false;  // allow unstable instrucitons
-bool allowhunstable = false; // allow highly unstable instruction
 
-//[nicklausw] ines stuff
+// iNES header variables
 bool ines_include = false;
 int inesprg_num = 0;
 int ineschr_num = 0;
@@ -49,8 +71,33 @@ int nes2wram_num = 0;
 int nes2bram_num = 0;
 int nes2chrbram_num = 0;
 
-// [freem addition (from asm6_sonder.c)]
-int filepos = 0;
+byte outputbuff[BUFFSIZE];
+byte inputbuff[BUFFSIZE];
+int outcount; // bytes waiting in outputbuff
+
+byte defaultfiller; // default fill value
+int filepos = 0;    // [freem addition (from asm6_sonder.c)] <- useless comment
+
+std::vector<comment *> comments;
+int lastcommentpos = -1;
+int commentcount;
+
+std::vector<label *> labellist; // all of the labels allocated thus far
+label *lastlabel;               // last label created
+label *labelhere;               // points to the label being defined on the current line (for EQU, =, etc)
+label firstlabel = {            // '$' label
+    "$",               // *name
+    0,                 // value
+    0,                 // pos
+    (char *)&true_ptr, // *line
+    VALUE,             // type
+    false,             // used
+    0,                 // pass
+    0,                 // scope
+    false,             // ignorenl
+    nullptr,           // link
+};
+
 
 const unsigned opsize[] = {0, 1, 2, 1, 1, 1, 1, 2, 2, 1, 2, 1, 0};
 const char ophead[] = {0, '#', '(', '(', '(', 0, 0, 0, 0, 0, 0, 0, 0};
@@ -113,10 +160,8 @@ const byte nop[] = {0xea, IMP, END_BYTE};
 const byte beq[] = {0xf0, REL, END_BYTE};
 const byte sed[] = {0xf8, IMP, END_BYTE};
 
-// asm6f addition:
-/* Undocumented/Illegal Opcodes (NMOS 6502 only!) */
+// Undocumented/Illegal Opcodes (NMOS 6502 only)
 // names/information taken from http://www.oxyron.de/html/opcodes02.html
-
 const byte slo[] = {0x07, ZP, 0x17, ZPX, 0x03, INDX, 0x13, INDY, 0x0f, ABS, 0x1F, ABSX, 0x1B, ABSY, END_BYTE};
 const byte rla[] = {0x27, ZP, 0x37, ZPX, 0x23, INDX, 0x33, INDY, 0x2f, ABS, 0x3f, ABSX, 0x3b, ABSY, END_BYTE};
 const byte sre[] = {0x47, ZP, 0x57, ZPX, 0x43, INDX, 0x53, INDY, 0x4f, ABS, 0x5f, ABSX, 0x5b, ABSY, END_BYTE};
@@ -131,15 +176,12 @@ const byte arr[] = {0x6b, IMM, END_BYTE};
 const byte axs[] = {0xcb, IMM, END_BYTE};
 const byte las[] = {0xbb, ABSY, END_BYTE};
 
-// "unstable in certain matters":
+// unstable opcodes
 const byte ahx[] = {0x93, INDY, 0x9f, ABSY, END_BYTE};
 const byte shy[] = {0x9c, ABSX, END_BYTE};
 const byte shx[] = {0x9e, ABSY, END_BYTE};
 const byte tas[] = {0x9b, ABSY, END_BYTE};
-
-// "highly unstable (results are not predictable on some machines)":
 const byte xaa[] = {0x8b, IMM, END_BYTE};
-// byte lax[]={0xab,IMM,END_BYTE};
 
 // reserved words
 const std::vector<std::pair<const char *, const byte *>> mnemonics = {
@@ -215,17 +257,15 @@ const std::vector<std::pair<const char *, const byte *>> mnemonics = {
     {"AXS", axs},
     {"LAS", las},
 
-    /* somewhat unstable instructions */
+    /* unstable instructions */
     {"AHX", ahx},
     {"SHY", shy},
     {"SHX", shx},
     {"TAS", tas},
-
-    /* highly unstable instructions */
     {"XAA", xaa}};
 
 const char *unstablelist[] = {
-    "AHX", "SHY", "SHX", "TAS"};
+    "AHX", "SHY", "SHX", "TAS", "XAA"};
 
 const std::vector<directive> directives = {
     {"", nothing},
@@ -282,7 +322,6 @@ const std::vector<directive> directives = {
     {"NES2BRAM", nes2bram},
     {"NES2CHRBRAM", nes2chrbram},
     {"UNSTABLE", unstable},
-    {"HUNSTABLE", hunstable},
 };
 
 const char OutOfRange[] = "Value out of range.";
@@ -316,48 +355,6 @@ const char whitesp[] = " \t\r\n:";   // treat ":" like whitespace (for labels)
 const char whitesp2[] = " \t\r\n\""; // (used for filename processing)
 
 char tmpstr[LINEMAX]; // all purpose big string
-
-unsigned pass = 0;
-unsigned scope;          //current scope, 0=global
-unsigned nextscope;      //next nonglobal scope (increment on each new block of localized code)
-bool lastchance = false; //set on final attempt
-bool needanotherpass;    //still need to take care of some things..
-bool error = false;      //hard error (stop assembly after this pass)
-char **makemacro = 0;    //(during macro creation) where next macro line will go.  1 to skip past macro
-char **makerept;         //like makemacro.. points to end of string chain
-int reptcount = 0;       //counts rept statements during rept string storage
-unsigned iflevel = 0;    //index into ifdone[],skipline[]
-int ifdone[IFNESTS];     //nonzero if current IF level has been true
-int skipline[IFNESTS];   //1 on an IF statement that is false
-const char *errmsg;
-char *inputfilename = nullptr;
-char *outputfilename = nullptr;
-char *listfilename = nullptr;
-char *cdlfilename = nullptr;
-const char *includepath = nullptr;
-bool verboselisting = false;   // expand REPT loops in listing
-bool genfceuxnl = false;       // [freem addition] generate FCEUX .nl files for symbolic debugging
-bool genmesenlabels = false;   // generate label files for use with Mesen
-bool gencdl = false;           // generate CDL file
-bool genlua = false;           // generate lua symbol file
-const char *listerr = nullptr; // error message for list file
-label *labelhere;              // points to the label being defined on the current line (for EQU, =, etc)
-FILE *listfile = nullptr;
-FILE *outputfile = nullptr;
-FILE *cdlfile = nullptr;
-byte outputbuff[BUFFSIZE];
-byte inputbuff[BUFFSIZE];
-int outcount; // bytes waiting in outputbuff
-std::vector<label *> labellist;
-label *lastlabel; // last label created
-std::vector<comment *> comments;
-int commentcount;
-int lastcommentpos = -1;
-bool nooutput = false; // supress output (use with ENUM)
-bool nonl = false;     // [freem addition] supress output to .nl files
-byte defaultfiller;    // default fill value
-int macrolevel = 0;    // number of nested macro/rept being expanded
-bool verbose = true;   // output messages to stdout
 
 // Prints printf-style message to stderr, then exits.
 // Closes and deletes output file.
@@ -1631,7 +1628,6 @@ void processfile(FILE *f, char *name)
       errmsg = NoENDM;
     if (nooutput)
       errmsg = NoENDE;
-    // [freem addition]
     if (nonl)
       errmsg = NoENDINL;
     if (errmsg)
@@ -1835,6 +1831,8 @@ int main(int argc, char **argv)
   }
   initlabels();
   initcomments();
+
+  // Parse command line arguments
   unsigned notoption = 0;
   for (int i = 1; i < argc; i++)
   {
@@ -1910,6 +1908,7 @@ int main(int argc, char **argv)
       notoption++;
     }
   }
+  
   if (!inputfilename)
     fatal_error("No source file specified.");
 
@@ -2572,14 +2571,6 @@ void opcode(label *id, char **next)
     }
   }
 
-  if (!allowhunstable)
-  {
-    if (!strcmp(id->name, "XAA"))
-    {
-      fatal_error("Highly unstable instruction \"%s\" used without calling HUNSTABLE.", id->name);
-    }
-  }
-
   for (byte *op = (byte *)id->line; *op != END_BYTE; op += 2)
   { // loop through all addressing modes for this instruction
     needanotherpass = oldstate;
@@ -3002,12 +2993,6 @@ void make_error(label *id, char **next)
 void unstable(label *id, char **next)
 {
   allowunstable = true;
-}
-
-void hunstable(label *id, char **next)
-{
-  allowunstable = true;
-  allowhunstable = true;
 }
 
 // [nicklausw] ines stuff

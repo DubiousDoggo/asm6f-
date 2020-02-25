@@ -9,7 +9,7 @@
             "type": "cppdbg",
             "request": "launch",
             "program": "${workspaceFolder}\\asm6f++.exe",
-            "args": [".\\test_cases\\sidescroll\\sidescroll.asm"],
+            "args": ["${workspaceFolder}\\test_cases\\sidescroll\\sidescroll.asm", "--path","${workspaceFolder}\\test_cases\\sidescroll", "-m", "-n"],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "environment": [],

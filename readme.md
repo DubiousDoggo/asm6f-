@@ -52,7 +52,7 @@ Command line
 Syntax
 --------------------------------------------------------------
 
-Comments begin with a semicolon (;).  A colon (:) following a label is
+Comments begin with a semicolon `;`.  A colon `:` following a label is
 optional.
 
 #### Examples:
@@ -65,15 +65,16 @@ optional.
 Numbers and expressions
 --------------------------------------------------------------
 
-Hexadecimal numbers begin with '$' or end with 'h'.  Binary numbers begin
-with '%' or end with 'b'.  Characters and strings are surrounded by
-single or double quotes.  The characters (' " \\) within quotes must be
-preceded by a backslash (\\).
+Hexadecimal numbers begin with `$` or end with `h`.  Binary numbers begin
+with `%` or end with `b`.  Characters and strings are surrounded by
+single or double quotes.  The characters `' " \` within quotes must be
+preceded by a backslash `\`.
 
 #### Examples:
 
     12345
     '12345'
+    'y\'ain\'t'
     $ABCD
     0ABCDh
     %01010101
@@ -141,15 +142,15 @@ Assembler directives (in no particular order)
 All directives are case insensitive and can also be preceded by a period (.)
 
 ### EQU
-For literal string replacement, similar to #define in C.
+For literal string replacement, similar to `#define` in C.
 
     one EQU 1
     plus EQU +
     DB one plus one ;DB 1 + 1
 
-### `=`
-Unlike EQU, statements with `=` are evaluated to a number first.
-Also unlike EQU, symbols created with `=` can be reused.
+### =
+Unlike EQU, statements with = are evaluated to a number first.
+Also unlike EQU, symbols created with = can be reused.
 
     i=1
     j EQU i+1
@@ -159,9 +160,10 @@ Also unlike EQU, symbols created with `=` can be reused.
 
 ### INCLUDE (also INCSRC)
 Assemble another source file as if it were part of the current
-source.
+source.  Quotes are optional.
 
     INCLUDE whatever.asm
+    INCLUDE "something.asm"
 
 ### INCBIN (also BIN)
 Add the contents of a file to the assembly output.
@@ -329,7 +331,8 @@ Useful for defining labels that may conflict with zero page addresses.
 
 ### UNSTABLE
 
-Enables use of somewhat unstable 6502 opcodes.
+Enables use of unstable 6502 opcodes. 
+See [Unstable Opcodes](#Supported%20Undocumented%20Opcodes)
 
     ; use some unstable undocumented instructions
     ldy #0
@@ -338,15 +341,6 @@ Enables use of somewhat unstable 6502 opcodes.
     shy example,x
     shx example,y
     tas example,y
-
-### HUNSTABLE
-
-Enables use of highly unstable 6502 opcodes.
-
-    ; throw caution to the wind and use xaa
-    HUNSTABLE
-    xaa #7
-
 
 iNES directives
 --------------------------------------------------------------
@@ -390,11 +384,11 @@ Amount of battery-packed CHR RAM in NES ROM.
 
 Supported Undocumented Opcodes
 --------------------------------------------------------------
-asm6f supports the use of a number of undocumented/"illegal" opcodes.
-Unstable opcodes require the use of the "UNSTABLE" and/or "HUNSTABLE"
-directives, or an error will be thrown.
+asm6f++ supports the use of a number of undocumented/"illegal" opcodes.
+Unstable opcodes require the use of the "UNSTABLE" directive, otherwise an 
+error will be thrown.
 
-Information about these opcodes was sourced from Graham's 6502 Opcode document:
+Information about these opcodes was sourced from Graham's 6502 Opcode document:  
 http://www.oxyron.de/html/opcodes02.html
 
 ## Undocumented
@@ -479,7 +473,8 @@ The alternate `$EB` opcode for `sbc #{immediate}` is not supported.
 > One source (which?) calls las "probably unreliable".
 
 ## Unstable
-"unstable in certain matters"; requires UNSTABLE directive.
+These operators have weird quirks and inconsistencies.  They require the 
+UNSTABLE directive to use.  
 
 ### AHX (A&H&X)
 
@@ -509,17 +504,13 @@ The alternate `$EB` opcode for `sbc #{immediate}` is not supported.
 
     tas {addrmode} = Stores A&X into S, A&X&H into {addrmode}
 
-## Highly Unstable
-> Results are not predictable on some machines.  
-*YOU HAVE BEEN WARNED*.
-
 ### XAA (X And A)
+> *Very unstable. Results are not predictable on some machines.*
+
 
     xaa #{immediate} = X&#{immediate}
 
 > Known as "ane" in other undocumented opcode sources. (Groepaz's doc)
-
-> requires HUNSTABLE directive.
 
 <!-- lax is currently not supported. is it? -->
 
