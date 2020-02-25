@@ -51,7 +51,7 @@ enum optypes
   IMP   // Implied
 };
 
-//precedence levels
+// precedence levels
 enum prectypes
 {
   WHOLEEXP,
@@ -93,7 +93,7 @@ enum operators
   RIGHTSHIFT, // bitwise shift right
 };
 
-//precedence of each operator
+// precedence of each operator
 const prectypes prec[] = {
     WHOLEEXP,
     EQCOMPARE,
@@ -132,10 +132,10 @@ struct label
   int pos; // Location in file; used to determine bank when exporting labels
 
   // TODO un-kitchensink this boi
-  char *line; //for macro or equate, also used to mark unknown label
-              //*next:text->*next:text->..
-              //for macros, the first <value> lines hold param names
-              //for opcodes (reserved), this holds opcode definitions, see initlabels
+  char *line; // for macro or equate, also used to mark unknown label
+              // *next:text->*next:text->..
+              // for macros, the first <value> lines hold param names
+              // for opcodes (reserved), this holds opcode definitions, see initlabels
 
   labeltype type; // labeltypes enum (see above)
   bool used;      // for EQU and MACRO recursion check
@@ -165,7 +165,7 @@ typedef void (*icfn)(label *, char **);
 
 label *findlabel(const char *);
 void initlabels();
-label *newlabel();
+label *newlabel(const char *);
 void getword(char *, char **, int);
 int getvalue(char **);
 int getoperator(char **);

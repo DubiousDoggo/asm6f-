@@ -15,22 +15,22 @@
 // what even the fuck
 static void *true_ptr = &true_ptr;
 
-unsigned pass = 0;  // current assembly pass
-unsigned scope;     // current scope, 0=global
-unsigned nextscope; // next nonglobal scope (increment on each new block of localized code)
+unsigned current_pass = 0; // current assembly pass
+unsigned current_scope;    // current scope, 0=global
+unsigned nextscope;        // next nonglobal scope (increment on each new block of localized code)
 
 bool lastchance = false; // set on final attempt
 bool needanotherpass;    // still need to take care of some things..
 bool error = false;      // hard error (stop assembly after this pass)
 const char *errmsg;
 
-char **makemacro = 0;  // (during macro creation) where next macro line will go.  1 to skip past macro
-char **makerept;       // like makemacro.. points to end of string chain
-int macrolevel = 0;    // number of nested macro/rept being expanded
-int reptcount = 0;     // counts rept statements during rept string storage
-unsigned iflevel = 0;  // index into ifdone[],skipline[]
-int ifdone[IFNESTS];   // nonzero if current IF level has been true
-int skipline[IFNESTS]; // 1 on an IF statement that is false
+char **makemacro = 0;    // (during macro creation) where next macro line will go.  1 to skip past macro
+char **makerept;         // like makemacro.. points to end of string chain
+unsigned macrolevel = 0; // number of nested macro/rept being expanded
+unsigned reptcount = 0;  // counts rept statements during rept string storage
+unsigned iflevel = 0;    // index into ifdone[],skipline[]
+int ifdone[IFNESTS];     // nonzero if current IF level has been true
+int skipline[IFNESTS];   // 1 on an IF statement that is false
 
 char *inputfilename = nullptr;     // input file name
 char *outputfilename = nullptr;    // output file name
@@ -50,9 +50,9 @@ bool gencdl = false;         // generate CDL file
 bool genlua = false;         // generate lua symbol file
 bool verbose = true;         // output messages to stdout
 
-bool nooutput = false;       // supress output (used with ENUM)
-bool nonl = false;           // supress output to .nl files (used with IGNORENL)
-bool allowunstable = false;  // allow unstable instrucitons
+bool nooutput = false;      // supress output (used with ENUM)
+bool nonl = false;          // supress output to .nl files (used with IGNORENL)
+bool allowunstable = false; // allow unstable instrucitons
 
 // iNES header variables
 bool ines_include = false;
@@ -80,12 +80,13 @@ int filepos = 0;    // [freem addition (from asm6_sonder.c)] <- useless comment
 
 std::vector<comment *> comments;
 int lastcommentpos = -1;
-int commentcount;
+size_t commentcount;
 
 std::vector<label *> labellist; // all of the labels allocated thus far
 label *lastlabel;               // last label created
 label *labelhere;               // points to the label being defined on the current line (for EQU, =, etc)
-label firstlabel = {            // '$' label
+label firstlabel = {
+    // '$' label
     "$",               // *name
     0,                 // value
     0,                 // pos
@@ -97,7 +98,6 @@ label firstlabel = {            // '$' label
     false,             // ignorenl
     nullptr,           // link
 };
-
 
 const unsigned opsize[] = {0, 1, 2, 1, 1, 1, 1, 2, 2, 1, 2, 1, 0};
 const char ophead[] = {0, '#', '(', '(', '(', 0, 0, 0, 0, 0, 0, 0, 0};
@@ -183,7 +183,6 @@ const byte shx[] = {0x9e, ABSY, END_BYTE};
 const byte tas[] = {0x9b, ABSY, END_BYTE};
 const byte xaa[] = {0x8b, IMM, END_BYTE};
 
-// reserved words
 const std::vector<std::pair<const char *, const byte *>> mnemonics = {
     {"BRK", brk},
     {"PHP", php},
@@ -242,7 +241,7 @@ const std::vector<std::pair<const char *, const byte *>> mnemonics = {
     {"DEC", dec},
     {"INC", inc},
 
-    /* begin undocumented/illegal opcodes */
+    /* undocumented opcodes */
     {"SLO", slo},
     {"RLA", rla},
     {"SRE", sre},
@@ -257,7 +256,7 @@ const std::vector<std::pair<const char *, const byte *>> mnemonics = {
     {"AXS", axs},
     {"LAS", las},
 
-    /* unstable instructions */
+    /* unstable opcodes */
     {"AHX", ahx},
     {"SHY", shy},
     {"SHX", shx},
@@ -482,7 +481,6 @@ int getvalue(char **str)
 {
   char *s, *end;
   int ret, chars, j;
-  label *p;
 
   getword(gvline, str, 1);
 
@@ -572,7 +570,7 @@ int getvalue(char **str)
   }
   else
   { // label---------------
-    p = findlabel(gvline);
+    label *p = findlabel(gvline);
     if (!p)
     { // label doesn't exist (yet?)
       needanotherpass = true;
@@ -902,7 +900,7 @@ label *getreserved(char **src)
   {
     if (p->type == MACRO)
     {
-      if (p->pass != pass)
+      if (p->pass != current_pass)
         p = nullptr;
     }
     else if (p->type != RESERVED)
@@ -1038,8 +1036,8 @@ char *expandline(char *dst, char *src)
 
       if (p != nullptr)
       {
-        if (p->type != EQUATE || p->pass != pass) // equates MUST be defined before being used otherwise they will be expanded in their own definition
-          p = nullptr;                            // i.e. (label equ whatever) gets translated to (whatever equ whatever)
+        if (p->type != EQUATE || p->pass != current_pass) // equates MUST be defined before being used otherwise they will be expanded in their own definition
+          p = nullptr;                                    // i.e. (label equ whatever) gets translated to (whatever equ whatever)
         else
         {
           if (p->used)
@@ -1357,29 +1355,28 @@ void export_mesenlabels()
   fclose(outfile);
 }
 
-// local:
-//  false: if label starts with LOCALCHAR, make it local, otherwise it's global
-//  true: force label to be local (used for macros)
-void addlabel(char *word, bool local)
+//
+// if force_local is set, the label will be treated as a local. Otherwise the
+// label will be local only if it starts with LOCALCHAR
+void addlabel(char *word, bool force_local)
 {
-  char c = *word;
-  label *p = findlabel(word);
-  if (p && local && !p->scope && p->type != VALUE) // if it's global and we're local
-    p = 0;                                         // pretend we didn't see it (local label overrides global of the same name)
+  const bool local = force_local || word[0] == LOCALCHAR;
 
-  // global labels advance scope
-  if (c != LOCALCHAR && !local)
+  label *p = findlabel(word);
+  if (p != nullptr && force_local && p->scope == 0 && p->type != VALUE) // if it's global and we're local
+    p = nullptr;                                                        // pretend we didn't see it (local label overrides global of the same name)
+
+  // global labels advance current_scope
+  if (!local)
   {
-    scope = nextscope++;
+    current_scope = nextscope++;
   }
 
-  if (!p)
+  if (p == nullptr)
   { // new label
-    labelhere = newlabel();
-    if (!labelhere->name) // name already set if it's a duplicate
-      labelhere->name = my_strdup(word);
+    labelhere = newlabel(my_strdup(word));
     labelhere->type = LABEL; // assume it's a label.. could mutate into something else later
-    labelhere->pass = pass;
+    labelhere->pass = current_pass;
     labelhere->value = addr;
     labelhere->line = reinterpret_cast<char *>(addr >= 0 ? true_ptr : nullptr);
     labelhere->used = false;
@@ -1390,9 +1387,9 @@ void addlabel(char *word, bool local)
     // [freem addition]
     labelhere->ignorenl = nonl;
 
-    if (c == LOCALCHAR || local)
+    if (local)
     { // local
-      labelhere->scope = scope;
+      labelhere->scope = current_scope;
     }
     else
     { // global
@@ -1403,19 +1400,19 @@ void addlabel(char *word, bool local)
   else
   { // old label
     labelhere = p;
-    if (p->pass == pass && c != '-')
-    { // if this label already encountered
+    if (p->pass == current_pass && word[0] != '-')
+    { // if this label already encountered and not a backwards label
       if (p->type == VALUE)
         return;
       else
         errmsg = LabelDefined;
     }
     else
-    { // first time seen on this pass or (-) label
-      p->pass = pass;
+    { // first time seen on this pass or a backwards label
+      p->pass = current_pass;
       if (p->type == LABEL)
       {
-        if (p->value != addr && c != '-')
+        if (p->value != addr && word[0] != '-')
         {
           needanotherpass = true; // label position is still moving around
           if (lastchance)
@@ -1441,10 +1438,8 @@ void initlabels()
 
   // add reserved words to label list
   for (const auto &word : mnemonics)
-  {                        // opcodes first
-    findlabel(word.first); // must call findlabel before using newlabel
-    p = newlabel();
-    p->name = word.first;
+  { // opcodes first
+    p = newlabel(word.first);
     p->value = (ptrdiff_t)opcode;
     p->line = const_cast<char *>(reinterpret_cast<const char *>(word.second));
     p->type = RESERVED;
@@ -1452,9 +1447,7 @@ void initlabels()
 
   for (const auto &directive : directives)
   { // other reserved words now
-    findlabel(const_cast<char *>(directive.name));
-    p = newlabel();
-    p->name = directive.name;
+    p = newlabel(directive.name);
     p->value = (ptrdiff_t)directive.func;
     p->type = RESERVED;
   }
@@ -1470,9 +1463,9 @@ void addcomment(char *text)
 {
   static unsigned oldpass = 0;
   int commentcount = comments.size();
-  if (oldpass != pass)
+  if (oldpass != current_pass)
   {
-    oldpass = pass;
+    oldpass = current_pass;
     commentcount = 0;
   }
 
@@ -1502,52 +1495,36 @@ void addcomment(char *text)
   }
 }
 
-// find label with this label_name
-// returns label* if found (and scope/etc is correct), returns nullptr if nothing found
-// if label_name wasn't found, findindex points to where label_name would be inserted (label_name<labellist[findindex])
-// if label_name was found but with wrong scope/whatever, findcmp=0.
-// don't call if list is empty!
-int findcmp;   // (these are used by newlabel)
-int findindex; // .
+// finds a label label with this label_name.
+// returns a pointer to the label if a label with the correct name and scope was
+// found, otherwise nullptr.
 label *findlabel(const char *label_name)
 {
+  // find points to the first element in label list that whose name is not less than label name.
+  // i.e. the first element where `strcmp((*find)->name, label_name) >= 0`
+  auto find = std::lower_bound(labellist.begin(), labellist.end(), label_name,
+                               [](label *const &a, const char *const &b) {
+                                 return strcmp(a->name, b) < 0;
+                               });
 
-  int head = 0;
-  int tail = labellist.size() - 1;
-  findindex = labellist.size() / 2;
-  do
-  { // assume list isn't empty
-    findcmp = strcmp(label_name, labellist.at(findindex)->name);
-    if (findcmp < 0)
-    {
-      tail = findindex - 1;
-      findindex -= (tail - head) / 2 + 1;
-    }
-    else if (findcmp > 0)
-    {
-      head = findindex + 1;
-      findindex += (tail - head) / 2 + 1;
-    }
-  } while (findcmp && (tail - head) >= 0);
-  if (findcmp)
-  {
-    if (findcmp < 0)
-      findindex++; // position findindex so the label it points to needs to shift right
+  if (strcmp((*find)->name, label_name) != 0)
+  { // label was not found
     return nullptr;
   }
-  label *p = labellist[findindex];
 
-  // check scope: label only visible if p.scope=(scope or 0)
+  // check scope: p is only visible if p's scope is the current scope or p's
+  // scope is global
+  label *p = *find;
   label *global = nullptr;
-  if (*label_name == '+')
-  { // forward labels need special treatment :P
+  if (label_name[0] == '+')
+  { // forward labels need special treatment
     do
     {
-      if (p->pass != pass)
-      {
-        if (!p->scope)
+      if (p->pass != current_pass)
+      { // dont consider forward labels already processed on this pass
+        if (p->scope == 0)
           global = p;
-        if (p->scope == scope)
+        if (p->scope == current_scope)
           return p;
       }
       p = p->link;
@@ -1559,7 +1536,7 @@ label *findlabel(const char *label_name)
     {
       if (p->scope == 0)
         global = p;
-      if (p->scope == scope)
+      if (p->scope == current_scope)
         return p;
       p = p->link;
     } while (p);
@@ -1567,29 +1544,37 @@ label *findlabel(const char *label_name)
   return global; // return global label only if no locals were found
 }
 
-// make new empty label and add it to list using result from last findlabel
-// ONLY use after calling findlabel
-label *newlabel()
+// Make new empty label with the given name and add it to the label list in
+// sorted order. If a label with this name already exists, the new label will
+// link to the old label and take its place in the label list
+label *newlabel(const char *label_name)
 {
-  label *p = (label *)my_malloc(sizeof(label));
-  p->link = nullptr;
+  label *p = new label;
+  p->name = label_name;
   p->scope = 0;
-  p->name = 0;
+  // find points to the first element in label list that is not less than p.
+  // i.e. the first element where `strcmp((*find)->name, p->name) >= 0`
+  auto find = std::lower_bound(labellist.begin(), labellist.end(), p,
+                               [](label *const &a, label *const &b) {
+                                 return strcmp(a->name, b->name) < 0;
+                               });
 
-  if (!findcmp)
-  {                                       // new label with same name
-    p->name = labellist[findindex]->name; // share old name
-    p->link = labellist[findindex];
-    labellist[findindex] = p;
-    return p;
+  if (strcmp((*find)->name, p->name) == 0)
+  { // label already exists with this name
+    auto findindex = std::distance(labellist.begin(), find);
+    p->link = *find;          // link new label to the old one
+    labellist[findindex] = p; // replace the old label
   }
-
-  labellist.insert(labellist.begin() + findindex, p);
+  else
+  { // otherwise insert the new label
+    p->link = nullptr;
+    labellist.insert(find, p);
+  }
   return p;
 }
 
 // why's this line here?
-// ==============================================================================
+// ============================================================================
 
 void showerror(char *errsrc, int errline)
 {
@@ -1622,7 +1607,7 @@ void processfile(FILE *f, char *name)
     errmsg = 0;
     if (iflevel != 0)
       errmsg = NoENDIF;
-    if (reptcount)
+    if (reptcount != 0)
       errmsg = NoENDR;
     if (makemacro)
       errmsg = NoENDM;
@@ -1649,7 +1634,7 @@ void processline(char *src, char *errsrc, int errline)
 
   errmsg = 0;
   comment = expandline(line, src);
-  if (!macrolevel || verboselisting)
+  if (macrolevel == 0 || verboselisting)
     listline(line, comment);
 
   s = line;
@@ -1697,7 +1682,7 @@ void processline(char *src, char *errsrc, int errline)
         break;
       }
 
-      if (reptcount)
+      if (reptcount != 0)
       { // REPT definition is in progress?
         p = getreserved(&s);
         errmsg = endmac = 0;
@@ -1710,11 +1695,11 @@ void processline(char *src, char *errsrc, int errline)
         {
           if (p->value == (ptrdiff_t)rept)
           {
-            ++reptcount; // keep track of how many ENDR's are needed to finish
+            reptcount++; // keep track of how many ENDR's are needed to finish
           }
           else if (p->value == (ptrdiff_t)endr)
           {
-            if (!(--reptcount))
+            if ((--reptcount) == 0)
             {
               comment = nullptr;
               if (endmac)
@@ -1726,7 +1711,7 @@ void processline(char *src, char *errsrc, int errline)
           }
         }
 
-        if (reptcount || endmac)
+        if (reptcount != 0 || endmac)
         { // add this line to REPT body
           if (comment != nullptr)
             strcat(line, comment); // keep comment for listing
@@ -1735,7 +1720,7 @@ void processline(char *src, char *errsrc, int errline)
           *makerept = 0;
           strcpy((char *)&makerept[1], line);
         }
-        if (!reptcount)
+        if (reptcount == 0)
         { // end of REPT, expand the whole thing right now
           expandrept(errline, errsrc);
         }
@@ -1821,7 +1806,7 @@ int main(int argc, char **argv)
   char str[512];
 
   char *nameptr;
-  label *p;
+
   FILE *f;
 
   if (argc < 2)
@@ -1865,10 +1850,9 @@ int main(int argc, char **argv)
       case 'd':
         if (argv[i][2])
         {
-          if (!findlabel(&argv[i][2]))
+          if (findlabel(my_strdup(&argv[i][2])) == nullptr)
           {
-            p = newlabel();
-            p->name = my_strdup(&argv[i][2]);
+            label *p = newlabel(my_strdup(&argv[i][2]));
             p->type = VALUE;
             p->value = 1;
             p->line = static_cast<char *>(true_ptr);
@@ -1908,7 +1892,7 @@ int main(int argc, char **argv)
       notoption++;
     }
   }
-  
+
   if (!inputfilename)
     fatal_error("No source file specified.");
 
@@ -1932,7 +1916,7 @@ int main(int argc, char **argv)
   }
 
   f = fopen(inputfilename, "rb"); // if srcfile won't open, try some default extensions
-  if (!f)
+  if (!f)                         // this might be a bad idea
   {
     strcpy(nameptr, ".asm");
     f = fopen(str, "rb");
@@ -1955,20 +1939,20 @@ int main(int argc, char **argv)
   }
 
   // main assembly loop:
-  p = 0;
+  label *p = nullptr;
   do
   {
     filepos = 0;
-    pass++;
-    if (pass == MAXPASSES || (p == lastlabel))
+    current_pass++;
+    if (current_pass == MAXPASSES || (p == lastlabel))
       lastchance = true; // give up on too many tries or no progress made
     if (lastchance)
       message("last try..\n");
     else
-      message("pass %i..\n", pass);
+      message("pass %i..\n", current_pass);
     needanotherpass = false;
     skipline[0] = 0;
-    scope = 1;
+    current_scope = 1;
     nextscope = 2;
     defaultfiller = DEFAULTFILLER; // reset filler value
     addr = NOORIGIN;               // undefine origin
@@ -2039,7 +2023,7 @@ void output(byte *p, int size, int cdlflag)
   }*/
   if (gencdl)
   {
-    if (oldpass != pass)
+    if (oldpass != current_pass)
     {
       if (cdlfile)
       {
@@ -2072,9 +2056,9 @@ void output(byte *p, int size, int cdlflag)
 
   if (nooutput)
     return;
-  if (oldpass != pass)
+  if (oldpass != current_pass)
   {
-    oldpass = pass;
+    oldpass = current_pass;
     if (outputfile)
       fclose(outputfile);
     outputfile = fopen(outputfilename, "wb");
@@ -2140,9 +2124,9 @@ void listline(char *src, char *comment)
   static unsigned oldpass = 0;
   if (!listfilename)
     return;
-  if (oldpass != pass)
+  if (oldpass != current_pass)
   { // new pass = new listfile
-    oldpass = pass;
+    oldpass = current_pass;
     if (listfile)
       fclose(listfile);
     listfile = fopen(listfilename, "w");
@@ -2816,8 +2800,8 @@ void expandmacro(label *id, char **next, int errline, char *errsrc)
     return;
   }
 
-  oldscope = scope; // watch those nested macros..
-  scope = nextscope++;
+  oldscope = current_scope; // watch those nested macros..
+  current_scope = nextscope++;
   macrolevel++;
   id->used = true;
   sprintf(macroerr, "%s(%i):%s", errsrc, errline, id->name);
@@ -2882,7 +2866,7 @@ void expandmacro(label *id, char **next, int errline, char *errsrc)
     line = (char **)*line;
   }
   errmsg = 0;
-  scope = oldscope;
+  current_scope = oldscope;
   macrolevel--;
   id->used = false;
 }
@@ -2908,12 +2892,12 @@ void expandrept(int errline, char *errsrc)
   int oldscope;
 
   start = (char **)repttext; // first rept data
-  oldscope = scope;
+  oldscope = current_scope;
   macrolevel++;
   for (int i = rept_loops; i; --i)
   {
     linecount = 0;
-    scope = nextscope++;
+    current_scope = nextscope++;
     sprintf(macroerr, "%s(%i):REPT", errsrc, errline);
     line = start;
     while (line)
@@ -2930,7 +2914,7 @@ void expandrept(int errline, char *errsrc)
     start = line;
   }
   errmsg = 0;
-  scope = oldscope;
+  current_scope = oldscope;
   macrolevel--;
 }
 
