@@ -1,5 +1,6 @@
 
 #include "asm6f++.hpp"
+#include "nonstdlib.hpp"
 
 #include <vector>
 #include <iostream>
@@ -12,8 +13,7 @@
 #include <ctype.h>
 #include <stdarg.h>
 
-// what even the fuck
-static void *true_ptr = &true_ptr;
+static void *true_ptr = &true_ptr; // a pointer masquerading as a bool
 
 unsigned current_pass = 0; // current assembly pass
 unsigned current_scope;    // current scope, 0=global
@@ -24,13 +24,13 @@ bool needanotherpass;    // still need to take care of some things..
 bool error = false;      // hard error (stop assembly after this pass)
 const char *errmsg;
 
-char **makemacro = 0;    // (during macro creation) where next macro line will go.  1 to skip past macro
-char **makerept;         // like makemacro.. points to end of string chain
-unsigned macrolevel = 0; // number of nested macro/rept being expanded
-unsigned reptcount = 0;  // counts rept statements during rept string storage
-unsigned iflevel = 0;    // index into ifdone[],skipline[]
-int ifdone[IFNESTS];     // nonzero if current IF level has been true
-int skipline[IFNESTS];   // 1 on an IF statement that is false
+char **makemacro = nullptr; // (during macro creation) where next macro line will go. set to true_ptr to skip past macro
+char **makerept;            // like makemacro.. points to end of string chain
+unsigned macrolevel = 0;    // number of nested macro/rept being expanded
+unsigned reptcount = 0;     // counts rept statements during rept string storage
+unsigned iflevel = 0;       // index into ifdone[],skipline[]
+bool ifdone[IFNESTS];       // true if current IF level has been true
+bool skipline[IFNESTS];     // true on an IF statement that is false
 
 char *inputfilename = nullptr;     // input file name
 char *outputfilename = nullptr;    // output file name
@@ -76,7 +76,7 @@ byte inputbuff[BUFFSIZE];
 int outcount; // bytes waiting in outputbuff
 
 byte defaultfiller; // default fill value
-int filepos = 0;    // [freem addition (from asm6_sonder.c)] <- useless comment
+int filepos = 0;
 
 std::vector<comment *> comments;
 int lastcommentpos = -1;
@@ -84,13 +84,13 @@ size_t commentcount;
 
 std::vector<label *> labellist; // all of the labels allocated thus far
 label *lastlabel;               // last label created
-label *labelhere;               // points to the label being defined on the current line (for EQU, =, etc)
-label firstlabel = {
+label *labelhere;               // points to the label being defined on the current line (for EQU, =, and MACRO)
+label firstlabel{
     // '$' label
     "$",               // *name
     0,                 // value
     0,                 // pos
-    (char *)&true_ptr, // *line
+    (char *)&true_ptr, // *kitchen_sink
     VALUE,             // type
     false,             // used
     0,                 // pass
@@ -99,174 +99,91 @@ label firstlabel = {
     nullptr,           // link
 };
 
-const unsigned opsize[] = {0, 1, 2, 1, 1, 1, 1, 2, 2, 1, 2, 1, 0};
-const char ophead[] = {0, '#', '(', '(', '(', 0, 0, 0, 0, 0, 0, 0, 0};
-const char *optail[] = {"A", "", ")", ",X)", "),Y", ",X", ",Y", ",X", ",Y", "", "", "", ""};
-
-const byte brk[] = {0x00, IMM, 0x00, ZP, 0x00, IMP, END_BYTE};
-const byte ora[] = {0x09, IMM, 0x01, INDX, 0x11, INDY, 0x15, ZPX, 0x1d, ABSX, 0x19, ABSY, 0x05, ZP, 0x0d, ABS, END_BYTE};
-const byte asl[] = {0x0a, ACC, 0x16, ZPX, 0x1e, ABSX, 0x06, ZP, 0x0e, ABS, 0x0a, IMP, END_BYTE};
-const byte php[] = {0x08, IMP, END_BYTE};
-const byte bpl[] = {0x10, REL, END_BYTE};
-const byte clc[] = {0x18, IMP, END_BYTE};
-const byte jsr[] = {0x20, ABS, END_BYTE};
-const byte and_[] = {0x29, IMM, 0x21, INDX, 0x31, INDY, 0x35, ZPX, 0x3d, ABSX, 0x39, ABSY, 0x25, ZP, 0x2d, ABS, END_BYTE};
-const byte bit[] = {0x24, ZP, 0x2c, ABS, END_BYTE};
-const byte rol[] = {0x2a, ACC, 0x36, ZPX, 0x3e, ABSX, 0x26, ZP, 0x2e, ABS, 0x2a, IMP, END_BYTE};
-const byte plp[] = {0x28, IMP, END_BYTE};
-const byte bmi[] = {0x30, REL, END_BYTE};
-const byte sec[] = {0x38, IMP, END_BYTE};
-const byte rti[] = {0x40, IMP, END_BYTE};
-const byte eor[] = {0x49, IMM, 0x41, INDX, 0x51, INDY, 0x55, ZPX, 0x5d, ABSX, 0x59, ABSY, 0x45, ZP, 0x4d, ABS, END_BYTE};
-const byte lsr[] = {0x4a, ACC, 0x56, ZPX, 0x5e, ABSX, 0x46, ZP, 0x4e, ABS, 0x4a, IMP, END_BYTE};
-const byte pha[] = {0x48, IMP, END_BYTE};
-const byte jmp[] = {0x6c, IND, 0x4c, ABS, END_BYTE};
-const byte bvc[] = {0x50, REL, END_BYTE};
-const byte cli[] = {0x58, IMP, END_BYTE};
-const byte rts[] = {0x60, IMP, END_BYTE};
-const byte adc[] = {0x69, IMM, 0x61, INDX, 0x71, INDY, 0x75, ZPX, 0x7d, ABSX, 0x79, ABSY, 0x65, ZP, 0x6d, ABS, END_BYTE};
-const byte ror[] = {0x6a, ACC, 0x76, ZPX, 0x7e, ABSX, 0x66, ZP, 0x6e, ABS, 0x6a, IMP, END_BYTE};
-const byte pla[] = {0x68, IMP, END_BYTE};
-const byte bvs[] = {0x70, REL, END_BYTE};
-const byte sei[] = {0x78, IMP, END_BYTE};
-const byte sta[] = {0x81, INDX, 0x91, INDY, 0x95, ZPX, 0x9d, ABSX, 0x99, ABSY, 0x85, ZP, 0x8d, ABS, END_BYTE};
-const byte sty[] = {0x94, ZPX, 0x84, ZP, 0x8c, ABS, END_BYTE};
-const byte stx[] = {0x96, ZPY, 0x86, ZP, 0x8e, ABS, END_BYTE};
-const byte dey[] = {0x88, IMP, END_BYTE};
-const byte txa[] = {0x8a, IMP, END_BYTE};
-const byte bcc[] = {0x90, REL, END_BYTE};
-const byte tya[] = {0x98, IMP, END_BYTE};
-const byte txs[] = {0x9a, IMP, END_BYTE};
-const byte ldy[] = {0xa0, IMM, 0xb4, ZPX, 0xbc, ABSX, 0xa4, ZP, 0xac, ABS, END_BYTE};
-const byte lda[] = {0xa9, IMM, 0xa1, INDX, 0xb1, INDY, 0xb5, ZPX, 0xbd, ABSX, 0xb9, ABSY, 0xa5, ZP, 0xad, ABS, END_BYTE};
-const byte ldx[] = {0xa2, IMM, 0xb6, ZPY, 0xbe, ABSY, 0xa6, ZP, 0xae, ABS, END_BYTE};
-const byte tay[] = {0xa8, IMP, END_BYTE};
-const byte tax[] = {0xaa, IMP, END_BYTE};
-const byte bcs[] = {0xb0, REL, END_BYTE};
-const byte clv[] = {0xb8, IMP, END_BYTE};
-const byte tsx[] = {0xba, IMP, END_BYTE};
-const byte cpy[] = {0xc0, IMM, 0xc4, ZP, 0xcc, ABS, END_BYTE};
-const byte cmp[] = {0xc9, IMM, 0xc1, INDX, 0xd1, INDY, 0xd5, ZPX, 0xdd, ABSX, 0xd9, ABSY, 0xc5, ZP, 0xcd, ABS, END_BYTE};
-const byte dec[] = {0xd6, ZPX, 0xde, ABSX, 0xc6, ZP, 0xce, ABS, END_BYTE};
-const byte iny[] = {0xc8, IMP, END_BYTE};
-const byte dex[] = {0xca, IMP, END_BYTE};
-const byte bne[] = {0xd0, REL, END_BYTE};
-const byte cld[] = {0xd8, IMP, END_BYTE};
-const byte cpx[] = {0xe0, IMM, 0xe4, ZP, 0xec, ABS, END_BYTE};
-const byte sbc[] = {0xe9, IMM, 0xe1, INDX, 0xf1, INDY, 0xf5, ZPX, 0xfd, ABSX, 0xf9, ABSY, 0xe5, ZP, 0xed, ABS, END_BYTE};
-const byte inc[] = {0xf6, ZPX, 0xfe, ABSX, 0xe6, ZP, 0xee, ABS, END_BYTE};
-const byte inx[] = {0xe8, IMP, END_BYTE};
-const byte nop[] = {0xea, IMP, END_BYTE};
-const byte beq[] = {0xf0, REL, END_BYTE};
-const byte sed[] = {0xf8, IMP, END_BYTE};
-
-// Undocumented/Illegal Opcodes (NMOS 6502 only)
-// names/information taken from http://www.oxyron.de/html/opcodes02.html
-const byte slo[] = {0x07, ZP, 0x17, ZPX, 0x03, INDX, 0x13, INDY, 0x0f, ABS, 0x1F, ABSX, 0x1B, ABSY, END_BYTE};
-const byte rla[] = {0x27, ZP, 0x37, ZPX, 0x23, INDX, 0x33, INDY, 0x2f, ABS, 0x3f, ABSX, 0x3b, ABSY, END_BYTE};
-const byte sre[] = {0x47, ZP, 0x57, ZPX, 0x43, INDX, 0x53, INDY, 0x4f, ABS, 0x5f, ABSX, 0x5b, ABSY, END_BYTE};
-const byte rra[] = {0x67, ZP, 0x77, ZPX, 0x63, INDX, 0x73, INDY, 0x6f, ABS, 0x7f, ABSX, 0x7b, ABSY, END_BYTE};
-const byte sax[] = {0x87, ZP, 0x97, ZPY, 0x83, INDX, 0x8f, ABS, END_BYTE};
-const byte lax[] = {0xa7, ZP, 0xb7, ZPY, 0xa3, INDX, 0xb3, INDY, 0xaf, ABS, 0xbf, ABSY, END_BYTE};
-const byte dcp[] = {0xc7, ZP, 0xd7, ZPX, 0xc3, INDX, 0xd3, INDY, 0xcf, ABS, 0xdf, ABSX, 0xdb, ABSY, END_BYTE};
-const byte isc[] = {0xe7, ZP, 0xf7, ZPX, 0xe3, INDX, 0xf3, INDY, 0xef, ABS, 0xff, ABSX, 0xfb, ABSY, END_BYTE};
-const byte anc[] = {0x0b, IMM, END_BYTE}; // has duplicate at 0x2b
-const byte alr[] = {0x4b, IMM, END_BYTE};
-const byte arr[] = {0x6b, IMM, END_BYTE};
-const byte axs[] = {0xcb, IMM, END_BYTE};
-const byte las[] = {0xbb, ABSY, END_BYTE};
-
-// unstable opcodes
-const byte ahx[] = {0x93, INDY, 0x9f, ABSY, END_BYTE};
-const byte shy[] = {0x9c, ABSX, END_BYTE};
-const byte shx[] = {0x9e, ABSY, END_BYTE};
-const byte tas[] = {0x9b, ABSY, END_BYTE};
-const byte xaa[] = {0x8b, IMM, END_BYTE};
-
-const std::vector<std::pair<const char *, const byte *>> mnemonics = {
-    {"BRK", brk},
-    {"PHP", php},
-    {"BPL", bpl},
-    {"CLC", clc},
-    {"JSR", jsr},
-    {"PLP", plp},
-    {"BMI", bmi},
-    {"SEC", sec},
-    {"RTI", rti},
-    {"PHA", pha},
-    {"BVC", bvc},
-    {"CLI", cli},
-    {"RTS", rts},
-    {"PLA", pla},
-    {"BVS", bvs},
-    {"SEI", sei},
-    {"DEY", dey},
-    {"BCC", bcc},
-    {"TYA", tya},
-    {"LDY", ldy},
-    {"TAY", tay},
-    {"BCS", bcs},
-    {"CLV", clv},
-    {"CPY", cpy},
-    {"INY", iny},
-    {"BNE", bne},
-    {"CLD", cld},
-    {"CPX", cpx},
-    {"INX", inx},
-    {"BEQ", beq},
-    {"SED", sed},
-    {"ORA", ora},
-    {"AND", and_},
-    {"EOR", eor},
-    {"ADC", adc},
-    {"STA", sta},
-    {"LDA", lda},
-    {"CMP", cmp},
-    {"SBC", sbc},
-    {"ASL", asl},
-    {"ROL", rol},
-    {"LSR", lsr},
-    {"ROR", ror},
-    {"TXA", txa},
-    {"TXS", txs},
-    {"LDX", ldx},
-    {"TAX", tax},
-    {"TSX", tsx},
-    {"DEX", dex},
-    {"NOP", nop},
-    {"BIT", bit},
-    {"JMP", jmp},
-    {"STY", sty},
-    {"STX", stx},
-    {"DEC", dec},
-    {"INC", inc},
+const std::vector<instruction> instructions{
+    {"ADC", {{ABS, 0x6d}, {ABX, 0x7d}, {ABY, 0x79}, {IMM, 0x69}, {IDX, 0x61}, {IDY, 0x71}, {ZPX, 0x75}, {ZPG, 0x65}}},
+    {"AND", {{ABS, 0x2d}, {ABX, 0x3d}, {ABY, 0x39}, {IMM, 0x29}, {IDX, 0x21}, {IDY, 0x31}, {ZPG, 0x25}, {ZPX, 0x35}}},
+    {"ASL", {{ACC, 0x0a}, {ZPX, 0x16}, {ABX, 0x1e}, {ZPG, 0x06}, {ABS, 0x0e}, {IMP, 0x0a}}},
+    {"BCC", {{REL, 0x90}}},
+    {"BCS", {{REL, 0xb0}}},
+    {"BEQ", {{REL, 0xf0}}},
+    {"BIT", {{ABS, 0x2c}, {ZPG, 0x24}}},
+    {"BMI", {{REL, 0x30}}},
+    {"BNE", {{REL, 0xd0}}},
+    {"BPL", {{REL, 0x10}}},
+    {"BRK", {{IMM, 0x00}, {IMP, 0x00}, {ZPG, 0x00}}},
+    {"BVC", {{REL, 0x50}}},
+    {"BVS", {{REL, 0x70}}},
+    {"CLC", {{IMP, 0x18}}},
+    {"CLD", {{IMP, 0xd8}}},
+    {"CLI", {{IMP, 0x58}}},
+    {"CLV", {{IMP, 0xb8}}},
+    {"CMP", {{ABS, 0xcd}, {ABX, 0xdd}, {ABY, 0xd9}, {IMM, 0xc9}, {IDX, 0xc1}, {IDY, 0xd1}, {ZPG, 0xc5}, {ZPX, 0xd5}}},
+    {"CPX", {{ABS, 0xec}, {IMM, 0xe0}, {ZPG, 0xe4}}},
+    {"CPY", {{ABS, 0xcc}, {IMM, 0xc0}, {ZPG, 0xc4}}},
+    {"DEC", {{ABS, 0xce}, {ABX, 0xde}, {ZPG, 0xc6}, {ZPX, 0xd6}}},
+    {"DEX", {{IMP, 0xca}}},
+    {"DEY", {{IMP, 0x88}}},
+    {"EOR", {{ABS, 0x4d}, {ABY, 0x59}, {ABX, 0x5d}, {IMM, 0x49}, {IDX, 0x41}, {IDY, 0x51}, {ZPG, 0x45}, {ZPX, 0x55}}},
+    {"INC", {{ABS, 0xee}, {ABX, 0xfe}, {ZPG, 0xe6}, {ZPX, 0xf6}}},
+    {"INX", {{IMP, 0xe8}}},
+    {"INY", {{IMP, 0xc8}}},
+    {"JMP", {{ABS, 0x4c}, {IND, 0x6c}}},
+    {"JSR", {{ABS, 0x20}}},
+    {"LDA", {{ABS, 0xad}, {ABX, 0xbd}, {ABY, 0xb9}, {IMM, 0xa9}, {IDX, 0xa1}, {IDY, 0xb1}, {ZPG, 0xa5}, {ZPX, 0xb5}}},
+    {"LDX", {{ABS, 0xae}, {ABY, 0xbe}, {IMM, 0xa2}, {ZPG, 0xa6}, {ZPY, 0xb6}}},
+    {"LDY", {{ABS, 0xac}, {ABX, 0xbc}, {IMM, 0xa0}, {ZPG, 0xa4}, {ZPX, 0xb4}}},
+    {"LSR", {{ACC, 0x4a}, {ABS, 0x4e}, {ABX, 0x5e}, {IMP, 0x4a}, {ZPG, 0x46}, {ZPX, 0x56}}},
+    {"NOP", {{IMP, 0xea}}},
+    {"ORA", {{ABS, 0x0d}, {ABX, 0x1d}, {ABY, 0x19}, {IMM, 0x09}, {IDX, 0x01}, {IDY, 0x11}, {ZPG, 0x05}, {ZPX, 0x15}}},
+    {"PHA", {{IMP, 0x48}}},
+    {"PHP", {{IMP, 0x08}}},
+    {"PLA", {{IMP, 0x68}}},
+    {"PLP", {{IMP, 0x28}}},
+    {"ROL", {{ACC, 0x2a}, {ABS, 0x2e}, {ABX, 0x3e}, {IMP, 0x2a}, {ZPG, 0x26}, {ZPX, 0x36}}},
+    {"ROR", {{ACC, 0x6a}, {ABS, 0x6e}, {ABX, 0x7e}, {IMP, 0x6a}, {ZPG, 0x66}, {ZPX, 0x76}}},
+    {"RTI", {{IMP, 0x40}}},
+    {"RTS", {{IMP, 0x60}}},
+    {"SBC", {{ABS, 0xed}, {ABX, 0xfd}, {ABY, 0xf9}, {IMM, 0xe9}, {IDX, 0xe1}, {IDY, 0xf1}, {ZPG, 0xe5}, {ZPX, 0xf5}}},
+    {"SEC", {{IMP, 0x38}}},
+    {"SED", {{IMP, 0xf8}}},
+    {"SEI", {{IMP, 0x78}}},
+    {"STA", {{ABS, 0x8d}, {ABX, 0x9d}, {ABY, 0x99}, {IDX, 0x81}, {IDY, 0x91}, {ZPG, 0x85}, {ZPX, 0x95}}},
+    {"STX", {{ABS, 0x8e}, {ZPG, 0x86}, {ZPY, 0x96}}},
+    {"STY", {{ABS, 0x8c}, {ZPG, 0x84}, {ZPX, 0x94}}},
+    {"TAX", {{IMP, 0xaa}}},
+    {"TAY", {{IMP, 0xa8}}},
+    {"TSX", {{IMP, 0xba}}},
+    {"TXA", {{IMP, 0x8a}}},
+    {"TXS", {{IMP, 0x9a}}},
+    {"TYA", {{IMP, 0x98}}},
 
     /* undocumented opcodes */
-    {"SLO", slo},
-    {"RLA", rla},
-    {"SRE", sre},
-    {"RRA", rra},
-    {"SAX", sax},
-    {"LAX", lax},
-    {"DCP", dcp},
-    {"ISC", isc},
-    {"ANC", anc},
-    {"ALR", alr},
-    {"ARR", arr},
-    {"AXS", axs},
-    {"LAS", las},
+    {"ALR", {{IMM, 0x4b}}},
+    {"ANC", {{IMM, 0x0b}}},
+    {"ARR", {{IMM, 0x6b}}},
+    {"AXS", {{IMM, 0xcb}}},
+    {"DCP", {{ABS, 0xcf}, {ABX, 0xdf}, {ABY, 0xdb}, {IDX, 0xc3}, {IDY, 0xd3}, {ZPG, 0xc7}, {ZPX, 0xd7}}},
+    {"ISC", {{ABS, 0xef}, {ABX, 0xff}, {ABY, 0xfb}, {IDX, 0xe3}, {IDY, 0xf3}, {ZPG, 0xe7}, {ZPX, 0xf7}}},
+    {"LAS", {{ABY, 0xbb}}},
+    {"LAX", {{ZPG, 0xa7}, {ZPY, 0xb7}, {IDX, 0xa3}, {IDY, 0xb3}, {ABS, 0xaf}, {ABY, 0xbf}}},
+    {"RLA", {{ABS, 0x2f}, {ABX, 0x3f}, {ABY, 0x3b}, {IDX, 0x23}, {IDY, 0x33}, {ZPG, 0x27}, {ZPX, 0x37}}},
+    {"RRA", {{ABS, 0x6f}, {ABX, 0x7f}, {ABY, 0x7b}, {IDX, 0x63}, {IDY, 0x73}, {ZPG, 0x67}, {ZPX, 0x77}}},
+    {"SAX", {{ABS, 0x8f}, {IDX, 0x83}, {ZPG, 0x87}, {ZPY, 0x97}}},
+    {"SLO", {{ABS, 0x0f}, {ABX, 0x1f}, {ABY, 0x1b}, {IDX, 0x03}, {IDY, 0x13}, {ZPG, 0x07}, {ZPX, 0x17}}},
+    {"SRE", {{ABS, 0x4f}, {ABX, 0x5f}, {ABY, 0x5b}, {IDX, 0x43}, {IDY, 0x53}, {ZPG, 0x47}, {ZPX, 0x57}}},
 
     /* unstable opcodes */
-    {"AHX", ahx},
-    {"SHY", shy},
-    {"SHX", shx},
-    {"TAS", tas},
-    {"XAA", xaa}};
+    {"AHX", {{ABY, 0x9f}, {IDY, 0x93}}},
+    {"SHX", {{ABY, 0x9e}}},
+    {"SHY", {{ABX, 0x9c}}},
+    {"TAS", {{ABY, 0x9b}}},
+    {"XAA", {{IMM, 0x8b}}},
+};
 
 const char *unstablelist[] = {
     "AHX", "SHY", "SHX", "TAS", "XAA"};
 
-const std::vector<directive> directives = {
+const std::vector<directive> directives{
     {"", nothing},
     {"IF", if_},
     {"ELSEIF", elseif},
@@ -320,8 +237,7 @@ const std::vector<directive> directives = {
     {"NES2VS", nes2vs},
     {"NES2BRAM", nes2bram},
     {"NES2CHRBRAM", nes2chrbram},
-    {"UNSTABLE", unstable},
-};
+    {"UNSTABLE", unstable}};
 
 const char OutOfRange[] = "Value out of range.";
 const char SeekOutOfRange[] = "Seek position out of range.";
@@ -350,8 +266,16 @@ const char NoENDINL[] = "Missing ENDINL.";
 const char IfNestLimit[] = "Too many nested IFs.";
 const char UndefinedPC[] = "PC is undefined (use ORG first)";
 
-const char whitesp[] = " \t\r\n:";   // treat ":" like whitespace (for labels)
-const char whitesp2[] = " \t\r\n\""; // (used for filename processing)
+const std::string whitespace_filename{"\t\r\n\""};
+#define whitesp2 whitespace_filename.c_str() // (used for filename processing)
+
+const std::string whitespace{" \t\r\n"};
+#define whitesp whitespace.c_str()
+
+const std::string math_chars{"!^&|+-*/%()<>=,"};
+#define mathy math_chars.c_str()
+
+const std::string math_delimiters{whitespace + math_chars};
 
 char tmpstr[LINEMAX]; // all purpose big string
 
@@ -430,148 +354,136 @@ char *my_strupr(char *string)
   return string;
 }
 
-int hexify(int i)
+byte from_hex(const char i)
 {
   if (i >= '0' && i <= '9')
-  {
     return i - '0';
-  }
   else if (i >= 'a' && i <= 'f')
-  {
     return i - ('a' - 10);
-  }
   else if (i >= 'A' && i <= 'F')
-  {
     return i - ('A' - 10);
-  }
-  else
-  {
-    errmsg = NotANumber;
-    return 0;
-  }
+
+  errmsg = NotANumber;
+  return -1;
 }
 
-#define eatwhitespace(str) (*str += strspn(*str, whitesp))
-
-// find end of str, excluding any chars in whitespace
-char *strend(char *str, const char *whitespace)
+byte from_bin(const char i)
 {
-  char c;
-  char *w = const_cast<char *>(whitespace);
-  char *end = str + strlen(str);
-  while (*w && end != str)
-  {
-    for (w = const_cast<char *>(whitespace), c = end[-1]; *w; w++)
-    {
-      if (*w == c)
-      {
-        end--;
-        break;
-      }
-    }
-  }
-  return end;
+  if (i == '0')
+    return 0;
+  if (i == '1')
+    return 1;
+
+  errmsg = NotANumber;
+  return -1;
 }
 
 // decode str into a number
 // set errmsg on error
-char gvline[WORDMAX];
-int dependant; // set to nonzero if symbol couldn't be resolved
-int getvalue(char **str)
+bool dependant; // set to nonzero if symbol couldn't be resolved
+int getvalue(std::string::const_iterator &begin, const std::string::const_iterator &end)
 {
-  char *s, *end;
-  int ret, chars, j;
-
-  getword(gvline, str, 1);
-
-  s = gvline;
-  if (!*s)
+  const std::string gv = nonstd::getword(begin, end, whitespace, math_delimiters);
+  if (gv.empty())
   {
     errmsg = MissingOperand;
     return 0;
   }
 
-  ret = chars = 0;
-  if (*s == '$')
-  { // hex---------------------
-    s++;
-    if (!*s)
-    {
-      ret = addr; // $ by itself is the PC
+  const char prefix = std::tolower(gv.front());
+  const char suffix = std::tolower(gv.back());
+
+  if (prefix == '$' && gv.length() == 1)
+    return addr; // $ by itself is the PC
+
+  auto gv_begin = gv.begin();
+  auto gv_end = gv.end();
+
+  if (prefix == '$' || (std::isdigit(prefix) && suffix == 'h'))
+  { // hexadecimal
+    if ((prefix == '$' && suffix == 'h') || (prefix == suffix))
+    { // dont allow duplicate specifiers or standalone $/h
+      errmsg = NotANumber;
+      return 0;
     }
-    else
-      do
-      {
-      hexi:
-        j = hexify(*s);
-        s++;
-        chars++;
-        ret = (ret << 4) | j;
-      } while (*s);
+
+    if (prefix == '$')
+      gv_begin++;
+    if (suffix == 'h')
+      gv_end--;
+
+    unsigned value = 0;
+    unsigned chars = 0;
+    while (gv_begin != gv_end)
+    {
+      value = (value << 4) | from_hex(*gv_begin);
+      chars++;
+      gv_begin++;
+    }
     if (chars > 8)
       errmsg = OutOfRange;
+    return value;
   }
-  else if (*s == '%')
-  { // binary----------------------
-    s++;
-    do
+
+  if (prefix == '%' || (std::isdigit(prefix) && suffix == 'b'))
+  { // binary
+    if ((prefix == '%' && suffix == 'b') || (prefix == suffix))
+    { // dont allow duplicate specifiers or standalone %/b
+      errmsg = NotANumber;
+      return 0;
+    }
+
+    if (prefix == '%')
+      gv_begin++;
+    if (suffix == 'b')
+      gv_end--;
+
+    unsigned value = 0;
+    unsigned chars = 0;
+    while (gv_begin != gv_end)
     {
-    bin:
-      j = *s;
-      s++;
+      value = (value << 1) | from_bin(*gv_begin);
       chars++;
-      j -= '0';
-      if (j > 1)
-      {
-        errmsg = NotANumber;
-      }
-      ret = (ret << 1) | j;
-    } while (*s);
+      gv_begin++;
+    }
     if (chars > 32)
       errmsg = OutOfRange;
+    return value;
   }
-  else if (*s == '\'')
-  { // char-----------------
-    s++;
-    if (*s == '\\')
-      s++;
-    ret = *s;
-    s++;
-    if (*s != '\'')
+
+  if (prefix == '\'' || prefix == '"')
+  { // char
+    gv_begin++;
+    if (*gv_begin == '\\')
+      gv_begin++; // escaped char
+    int ret = *gv_begin;
+    gv_begin++;
+    if (gv_begin != gv_end || *gv_begin != prefix)
       errmsg = NotANumber;
+    return ret;
   }
-  else if (*s == '"')
-  { // char 2-----------------
-    s++;
-    if (*s == '\\')
-      s++;
-    ret = *s;
-    s++;
-    if (*s != '"')
-      errmsg = NotANumber;
-  }
-  else if (*s >= '0' && *s <= '9')
-  { // number--------------
-    end = s + strlen(s) - 1;
-    if (strspn(s, "0123456789") == strlen(s))
-      ret = atoi(s);
-    else if (*end == 'b' || *end == 'B')
+
+  if (std::isdigit(prefix))
+  { // number
+    try
     {
-      *end = 0;
-      goto bin;
+      return std::stoi(std::string(gv_begin, gv_end), nullptr, 10);
     }
-    else if (*end == 'h' || *end == 'H')
+    catch (const std::out_of_range &)
     {
-      *end = 0;
-      goto hexi;
+      errmsg = OutOfRange;
+      return 0;
     }
-    else
+    catch (const std::invalid_argument &)
+    {
       errmsg = NotANumber;
+      return 0;
+    }
   }
-  else
-  { // label---------------
-    label *p = findlabel(gvline);
-    if (!p)
+
+  { // label
+    label *p = findlabel(gv);
+    if (p == nullptr)
     { // label doesn't exist (yet?)
       needanotherpass = true;
       dependant = 1;
@@ -579,47 +491,49 @@ int getvalue(char **str)
       { // only show error once we're certain label will never exist
         errmsg = UnknownLabel;
       }
+      return 0;
     }
     else
     {
-      dependant |= !p->line;
-      needanotherpass |= !p->line;
+      dependant |= !p->kitchen_sink;
+      needanotherpass |= !p->kitchen_sink;
       if (p->type == LABEL || p->type == VALUE)
       {
-        ret = p->value;
+        return p->value;
       }
       else if (p->type == MACRO)
       {
         errmsg = "Can't use macro in expression.";
+        return 0;
       }
       else
       { // what else is there?
         errmsg = UnknownLabel;
+        return 0;
       }
     }
   }
-  return ret;
 }
 
 // get operator from str and advance str
-int getoperator(char **str)
+operators getoperator(std::string::const_iterator &str, const std::string::const_iterator &end)
 {
-  *str += strspn(*str, whitesp); // eatwhitespace
-  (*str)++;
-  switch (*(*str - 1))
+  str = nonstd::eat_characters(str, end, whitespace);
+  str++;
+  switch (*(str - 1))
   {
   case '&':
-    if (**str == '&')
+    if (*str == '&')
     {
-      (*str)++;
+      str++;
       return ANDAND;
     }
     else
       return AND;
   case '|':
-    if (**str == '|')
+    if (*str == '|')
     {
-      (*str)++;
+      str++;
       return OROR;
     }
     else
@@ -637,69 +551,65 @@ int getoperator(char **str)
   case '/':
     return DIV;
   case '=':
-    if (**str == '=')
-      (*str)++;
+    if (*str == '=')
+      str++;
     return EQUAL;
   case '>':
-    if (**str == '=')
+    if (*str == '=')
     {
-      (*str)++;
+      str++;
       return GREATEREQ;
     }
-    else if (**str == '>')
+    else if (*str == '>')
     {
-      (*str)++;
+      str++;
       return RIGHTSHIFT;
     }
     else
       return GREATER;
   case '<':
-    if (**str == '=')
+    if (*str == '=')
     {
-      (*str)++;
+      str++;
       return LESSEQ;
     }
-    else if (**str == '>')
+    else if (*str == '>')
     {
-      (*str)++;
+      str++;
       return NOTEQUAL;
     }
-    else if (**str == '<')
+    else if (*str == '<')
     {
-      (*str)++;
+      str++;
       return LEFTSHIFT;
     }
     else
       return LESS;
   case '!':
-    if (**str == '=')
+    if (*str == '=')
     {
-      (*str)++;
+      str++;
       return NOTEQUAL;
     }
     // no break
   default:
-    (*str)--;
+    str--;
     return NOOP;
   }
 }
 
 // evaluate expression in str and advance str
-int eval(char **str, int precedence)
+int eval(std::string::const_iterator &str, const std::string::const_iterator &end, const prectypes precedence)
 {
-  char unary;
-  char *s, *s2;
   int ret, val2;
-  int op;
-
-  s = *str + strspn(*str, whitesp); // eatwhitespace
-  unary = *s;
+  auto s = nonstd::eat_characters(str, end, whitespace);
+  const char unary = *s;
   switch (unary)
   {
   case '(':
     s++;
-    ret = eval(&s, WHOLEEXP);
-    s += strspn(s, whitesp); // eatwhitespace
+    ret = eval(s, end, WHOLEEXP);
+    s = nonstd::eat_characters(s, end, whitespace);
     if (*s == ')')
       s++;
     else
@@ -707,65 +617,74 @@ int eval(char **str, int precedence)
     break;
   case '#':
     s++;
-    ret = eval(&s, WHOLEEXP);
+    ret = eval(s, end, WHOLEEXP);
     break;
   case '~':
     s++;
-    ret = ~eval(&s, UNARY);
+    ret = ~eval(s, end, UNARY);
     break;
   case '!':
     s++;
-    ret = !eval(&s, UNARY);
+    ret = !eval(s, end, UNARY);
     break;
   case '<':
     s++;
-    ret = eval(&s, UNARY) & 0xff;
+    ret = eval(s, end, UNARY) & 0xff;
     break;
   case '>':
     s++;
-    ret = (eval(&s, UNARY) >> 8) & 0xff;
+    ret = (eval(s, end, UNARY) >> 8) & 0xff;
     break;
   case '+':
   case '-':
     // careful.. might be a +-label
-    s2 = s;
-    s++;
-    op = dependant; // eval() is reentrant so don't mess up dependant
-    val2 = needanotherpass;
-    dependant = 0;
-    ret = getvalue(&s2);
-    if (errmsg == UnknownLabel)
-      errmsg = 0;
-    if (!dependant || s2 == s)
-    { // found something or single + -
-      s = s2;
-      s2 = 0; // flag that we got something
-      dependant |= op;
-    }
-    else
-    { // not a label after all..
-      dependant = op;
-      needanotherpass = val2;
-    }
-    if (s2)
-    { // if it wasn't a +-label
-      ret = eval(&s, UNARY);
-      if (unary == '-')
-        ret = -ret;
+    { // new scope here for variable allocation
+      auto s2 = s;
+      s++;
+      int dependant_temp = dependant; // eval() is recursive so don't mess up dependant
+      bool another_pass_temp = needanotherpass;
+      dependant = 0;
+      ret = getvalue(s2, end);
+      if (errmsg == UnknownLabel)
+        errmsg = nullptr;
+
+      if (!dependant || s2 == s)
+      { // found a label or single +/-
+        s = s2;
+        s2 = end;
+        dependant |= dependant_temp;
+      }
+      else
+      { // not a label after all..
+        dependant = dependant_temp;
+        needanotherpass = another_pass_temp;
+      }
+      if (s2 != end)
+      { // if it wasnt a +/- label
+        ret = eval(s, end, UNARY);
+        if (unary == '-')
+          ret = -ret;
+      }
     }
     break;
   default:
-    ret = getvalue(&s);
+    ret = getvalue(s, end);
   }
 
+  operators op;
   do
   {
-    *str = s;
-    op = getoperator(&s);
-    if (precedence < prec[op])
+    str = s;
+    op = getoperator(s, end);
+    if (prec[op] > precedence)
     {
-      val2 = eval(&s, prec[op]);
-      if (!dependant)
+      val2 = eval(s, end, prec[op]);
+      if (dependant)
+      {
+        ret = 0;
+      }
+      else
+      {
         switch (op)
         {
         case AND:
@@ -793,13 +712,13 @@ int eval(char **str, int precedence)
           ret *= val2;
           break;
         case DIV:
-          if (!val2)
+          if (val2 == 0)
             errmsg = DivZero;
           else
             ret /= val2;
           break;
         case MOD:
-          if (!val2)
+          if (val2 == 0)
             errmsg = DivZero;
           else
             ret %= val2;
@@ -828,32 +747,17 @@ int eval(char **str, int precedence)
         case RIGHTSHIFT:
           ret >>= val2;
           break;
+        case NOOP:
+          break;
         }
-      else
-        ret = 0;
+      }
     }
-  } while (precedence < prec[op] && !errmsg);
+  } while (prec[op] > precedence && !errmsg);
   return ret;
 }
 
-// copy next word from src into dst and advance src
-// mcheck=1 to crop mathy stuff (0 for filenames,etc)
-void getword(char *dst, char **src, int mcheck)
+FILE *getfile(std::string filename, const char *args)
 {
-  *src += strspn(*src, whitesp); // eatwhitespace
-  strncpy(dst, *src, WORDMAX - 1);
-  dst[WORDMAX - 1] = 0;
-  strtok(dst, whitesp); // no trailing whitespace
-  if (mcheck)
-    strtok(dst, mathy);
-  *src += strlen(dst);
-  if (**src == ':')
-    (*src)++; // cheesy fix for rept/macro listing
-}
-
-FILE *getfile(const char *fname, const char *args)
-{
-  std::string filename(fname);
   filename.erase(0, filename.find_first_not_of(" \t\r\n\""));
   filename.erase(filename.find_last_not_of(" \t\r\n\"") + 1);
   FILE *f = fopen(filename.c_str(), args);
@@ -870,26 +774,26 @@ FILE *getfile(const char *fname, const char *args)
   return f;
 }
 
-// get word in src, advance src, and return reserved label*
-label *getreserved(char **src)
+// get word in src, advance src, and return label*
+// if the word is not a valid label, or if a label was found that is not a
+// macro or reserved word, sets errmsg and returns nullptr .
+label *getreserved(std::string::const_iterator &src, const std::string::const_iterator &end)
 {
-  char dst[WORDMAX];
-  char upp[WORDMAX];
+  std::string dst;
+  std::string upp;
 
-  *src += strspn(*src, whitesp); // eatwhitespace
-  if (**src == '=')
+  src = nonstd::eat_characters(src, end, whitespace);
+  if (*src == '=')
   { // special '=' reserved word
-    upp[0] = '=';
-    upp[1] = 0;
-    (*src)++;
+    upp = "=";
+    src++;
   }
   else
   {
-    if (**src == '.') // reserved words can start with "."
-      (*src)++;
-    getword(dst, src, 1);
-    strcpy(upp, dst);
-    my_strupr(upp);
+    if (*src == '.') // reserved words can start with "."
+      src++;
+    dst = nonstd::getword(src, end, whitespace);
+    upp = nonstd::to_upper(dst);
   }
 
   label *p = findlabel(upp); // case insensitive reserved word
@@ -899,7 +803,7 @@ label *getreserved(char **src)
   if (p != nullptr)
   {
     if (p->type == MACRO)
-    {
+    { // macros can only be used after they are defined
       if (p->pass != current_pass)
         p = nullptr;
     }
@@ -915,94 +819,96 @@ label *getreserved(char **src)
   return p;
 }
 
-// copy word to dst, advance src
-// return true if it looks like a label
-int getlabel(char *dst, char **src)
+// Copies next word to dst and advances next.
+// Returns true if the word is a valid label, otherwise sets error and returns false.
+// If dst has a trailing `:` it will be removed.
+// The special `$` label holds the current program address. Labels beginning
+// with `@` are local labels. They have limited scope, visible only between
+// non-local labels. Names of local labels may be reused. Labels beginning with
+// one or more `+` or `-` characters are nameless labels. Forward labels
+// (beginning with `+`) can only be used before their labeled location.
+// Backwards labels can only be used after their labeled location. Nameless
+// labels can be reused, they will always refer to the label closest to the
+// current line. Label names must start with either an alphabetic character or
+// an underscore to be considered valid.
+bool good_label(std::string &dst, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
-  char *s;
-  char c;
-
-  getword(dst, src, 1);
-  if (*dst == '$' && !dst[1]) // '$' label
-    return 1;
-
-  s = dst; // +label, -label
-  c = *s;
-  if (c == '+' || c == '-')
+  // TODO should it set error?
+  dst = nonstd::getword(next, end, whitespace, math_delimiters);
+  if (dst.empty())
   {
+    errmsg = Illegal;
+    return false;
+  }
+
+  if (dst.back() == ':')
+    dst.pop_back();
+
+  if (dst.length() == 1 && dst[0] == '$') // '$' label
+    return true;
+
+  auto s = dst.begin();
+  char first = *s;
+  if (first == '+' || first == '-')
+  { // nameless label
     do
       s++;
-    while (*s == c);
-    if (!*s) // just ++.. or --.., no text
-      return 1;
+    while (*s == first);
+    if (s == dst.end()) // just ++.. or --.., no text
+      return true;
+    first = *s;
   }
-  c = *s;
-  if (c == LOCALCHAR || c == '_' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))
+  if (first == LOCALCHAR || first == '_' || std::isalpha(first))
   { // label can start with these
-    return 1;
+    return true;
   }
   else
   {
-    errmsg = Illegal; // fucked up instruction
-    return 0;
+    errmsg = Illegal; // bad label
+    return false;
   }
 }
 
-// Expand all equates from src into dst, and remove comment
-// returns a pointer to the comment in src or null.
-// CRIPES what a mess...
-char *expandline(char *dst, char *src)
-{
-  char *start;
-  char *comment = nullptr;
-  char c, c2;
-
-  char upp[WORDMAX];
-
+// Expands equates from src into dst, excluding comment
+// src is advanced to the begining of the comment if there is one, or end
+void expandline(std::string &dst, std::string::const_iterator &src, const std::string::const_iterator &end)
+{ // TODO document examples
   bool def_skip = false;
-  do
+  while (src != end)
   {
-    c = *src;
-    if (c == '$' || (c >= '0' && c <= '9'))
-    { // read past numbers (could be mistaken for a symbol, i.e. $BEEF)
+    char c = *src;
+    if (c == '$' || std::isdigit(c))
+    { // read past digits (could be mistaken for a symbol, i.e. $BEEF)
       do
       {
-        *dst = c;
+        dst += c;
         src++;
-        dst++;
         c = *src;
-      } while ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'H') || (c >= 'a' && c <= 'h'));
-      c = 1; // don't terminate yet
+      } while (src != end && (std::isxdigit(c) || std::tolower(c) == 'h'));
+      continue;
     }
     else if (c == '"' || c == '\'')
     { // read past quotes
-      *dst = c;
-      dst++;
-      src++;
       do
       {
-        *dst = c2 = *src;
-        if (c2 == '\\')
+        dst += *src;
+        if (*src == '\\')
         {
-          dst++;
           src++;
-          *dst = *src;
+          dst += *src;
         }
-        dst++;
         src++;
-      } while (c2 && c2 != c);
-      c = c2;
+      } while (src != end && *src != c);
+      dst += c;
     }
-    else if (c == '_' || c == '.' || c == LOCALCHAR || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))
+    else if (c == '_' || c == '.' || c == LOCALCHAR || std::isalpha(c))
     { // symbol
-      start = src;
+      auto start = src;
       do
       { // scan to end of symbol
         src++;
         c = *src;
-      } while (c == '_' || c == '.' || c == LOCALCHAR || (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'));
-
-      *src = '\0'; // terminate @ end of word (temporarily)
+      } while (c == '_' || c == '.' || c == LOCALCHAR || std::isalnum(c));
 
       /*
       ghey hack.
@@ -1019,90 +925,68 @@ char *expandline(char *dst, char *src)
       rendering IFDEF useless, so we will bypass expansion in this special case.
       I'm avoiding getreserved() because it does searching and other unnecessary crap.
       */
+
       label *p = nullptr;
       if (!def_skip)
       {
-        strcpy(upp, start + (*start == '.'));
-        my_strupr(upp);
-        if (!strcmp(upp, "IFDEF") || !strcmp(upp, "IFNDEF"))
-        {
+        const std::string temp{start + (*start == '.'), src};
+        const std::string temp_upper = nonstd::to_upper(temp);
+        if ((temp_upper == "IFDEF") ||
+            (temp_upper == "IFNDEF"))
           def_skip = true;
-        }
         else
-        {
-          p = findlabel(start);
-        }
-      }
-
-      if (p != nullptr)
-      {
-        if (p->type != EQUATE || p->pass != current_pass) // equates MUST be defined before being used otherwise they will be expanded in their own definition
-          p = nullptr;                                    // i.e. (label equ whatever) gets translated to (whatever equ whatever)
-        else
-        {
-          if (p->used)
-          {
-            p = nullptr;
-            errmsg = RecurseEQU;
-          }
-        }
+          p = findlabel(temp);
       }
       if (p != nullptr)
       {
+        if (p->type != EQUATE || p->pass != current_pass)
+        { // equates MUST be defined before being used otherwise they will be expanded in their own definition
+          // i.e. (label equ whatever) gets translated to (whatever equ whatever)
+          p = nullptr;
+        }
+        else if (p->used)
+        {
+          p = nullptr;
+          errmsg = RecurseEQU;
+          break;
+        }
+      }
+      if (p != nullptr)
+      { // p is a valid equate
         p->used = true;
-        expandline(dst, p->line);
+        const std::string temp{p->kitchen_sink};
+        auto temp_iter = temp.begin();
+        expandline(dst, temp_iter, temp.end());
         p->used = false;
       }
       else
       {
-        strcpy(dst, start);
+        dst.append(start, src);
       }
-      dst += strlen(dst);
-      *src = c;
     }
     else
     {
       if (c == ';')
       { // comment
-        c = '\0';
-        comment = src;
+        return;
       }
-      *dst = c;
-      dst++;
+      dst += c;
       src++;
     }
-  } while (c != '\0');
-
-  return comment;
-}
-
-int eatchar(char **str, char c)
-{
-  if (c)
-  {
-    *str += strspn(*str, whitesp); // eatwhitespace
-    if (**str == c)
-    {
-      (*str)++;
-      return 1;
-    }
-    else
-      return 0;
   }
-  return 1;
 }
 
-// reverse string
-void reverse(char *dst, char *src)
+bool next_arg(std::string::const_iterator &str, const std::string::const_iterator &end)
 {
-  dst += strlen(src);
-  *dst = 0;
-  while (*src)
-    *(--dst) = *(src++);
+  str = nonstd::eat_characters(str, end, whitespace);
+  if (str != end && *str == ',')
+  {
+    str++;
+    return true;
+  }
+  return false;
 }
 
-// ===========================================================================================================
-/* [freem addition(imported code from asm6_sonder.c)] */
 void export_labelfiles()
 {
   // iterate through all the labels and output FCEUX-compatible label info files
@@ -1118,7 +1002,7 @@ void export_labelfiles()
   }
 
   // ram file: <output>.ram.nl
-  // bank files: <output>.bank#hex.nl
+  // bank files: <output>.<bank number in hex>.nl
 
   strcpy(filename, outputfilename);
 
@@ -1151,10 +1035,10 @@ void export_labelfiles()
     if (
         (
             l->type == LABEL ||
-            ((l->type == EQUATE || l->type == VALUE) && strlen(l->name) > 1)) &&
+            ((l->type == EQUATE || l->type == VALUE) && l->name.length() > 1)) &&
         l->value < 0x10000)
     {
-      sprintf(str, "$%04X#%s#\n", (unsigned int)l->value, l->name);
+      sprintf(str, "$%04X#%s#\n", (unsigned int)l->value, l->name.c_str());
       // puts(str);
 
       if (l->value < 0x8000)
@@ -1205,10 +1089,10 @@ void export_lua()
   for (const label *l : labellist)
   {
 
-    if ((l->type == LABEL || ((l->type == EQUATE || l->type == VALUE) && strlen(l->name) > 1)) &&
+    if ((l->type == LABEL || ((l->type == EQUATE || l->type == VALUE) && l->name.length() > 1)) &&
         l->name[0] != '-' && l->name[0] != '+') // no anonymous labels
     {
-      sprintf(str, "%s = 0x%04X\n", l->name, (unsigned int)l->value);
+      sprintf(str, "%s = 0x%04X\n", l->name.c_str(), (unsigned int)l->value);
       fwrite((const void *)str, 1, strlen(str), mainfile);
     }
   }
@@ -1216,7 +1100,7 @@ void export_lua()
   fclose(mainfile);
 }
 
-bool comparelabels(label *&a, label *&b)
+bool comparelabels(const label *a, const label *b)
 {
   if (a->type < b->type)
     return true;
@@ -1230,7 +1114,7 @@ bool comparelabels(label *&a, label *&b)
     return true;
   if (a->value > b->value)
     return false;
-  return strcmp(a->name, b->name) < 0;
+  return a->name < b->name;
 }
 
 int comparecomments(const void *arg1, const void *arg2)
@@ -1248,7 +1132,7 @@ int comparecomments(const void *arg1, const void *arg2)
 // based on their type (LABEL's,EQUATE's,VALUE's) and address (ram/rom)
 void export_mesenlabels()
 {
-  std::string filename(outputfilename);
+  std::string filename{outputfilename};
 
   // Strip the extension from output filename
   size_t extension = filename.rfind('.');
@@ -1281,7 +1165,7 @@ void export_mesenlabels()
 
     if (l->type == LABEL)
     {                  // Labels in the actual code
-      if (l->pos < 16) // TODO - this thows out labels?
+      if (l->pos < 16) // TODO - this thows out labels, pos is messed up?
       {                // Ignore file header
         continue;
       }
@@ -1318,7 +1202,7 @@ void export_mesenlabels()
       }
 
       // Dump the label
-      sprintf(str, "P:%04X:%s", (unsigned int)(l->pos - 16), l->name);
+      sprintf(str, "P:%04X:%s", (unsigned int)(l->pos - 16), l->name.c_str());
       fwrite((const void *)str, 1, strlen(str), outfile);
 
       if (commenttext)
@@ -1335,18 +1219,18 @@ void export_mesenlabels()
       {
         // TODO - dont assume
         // Assume nes internal RAM below $2000 (2kb)
-        sprintf(str, "R:%04X:%s\n", (unsigned int)l->value, l->name);
+        sprintf(str, "R:%04X:%s\n", (unsigned int)l->value, l->name.c_str());
       }
       else if (l->value >= 0x6000 && l->value < 0x8000)
       {
         // Assume save/work RAM ($6000-$7FFF), dump as both. (not the best solution - maybe an option?)
-        sprintf(str, "S:%04X:%s\n", (unsigned int)l->value - 0x6000, l->name);
-        sprintf(str, "W:%04X:%s\n", (unsigned int)l->value - 0x6000, l->name);
+        sprintf(str, "S:%04X:%s\n", (unsigned int)l->value - 0x6000, l->name.c_str());
+        sprintf(str, "W:%04X:%s\n", (unsigned int)l->value - 0x6000, l->name.c_str());
       }
       else
       {
         // Assume a global register for everything else (e.g $8000 for mapper control, etc.)
-        sprintf(str, "G:%04X:%s\n", (unsigned int)l->value, l->name);
+        sprintf(str, "G:%04X:%s\n", (unsigned int)l->value, l->name.c_str());
       }
       fwrite((const void *)str, 1, strlen(str), outfile);
     }
@@ -1355,16 +1239,16 @@ void export_mesenlabels()
   fclose(outfile);
 }
 
-//
-// if force_local is set, the label will be treated as a local. Otherwise the
-// label will be local only if it starts with LOCALCHAR
-void addlabel(char *word, bool force_local)
+// Creates a new label and adds it to the label list. Sets labelhere to the new label.
+// If force_local is set, the label will be treated as a local, otherwise the
+// label will be local only if it starts with LOCALCHAR.
+void addlabel(std::string label_name, bool force_local)
 {
-  const bool local = force_local || word[0] == LOCALCHAR;
+  const bool local = force_local || label_name.at(0) == LOCALCHAR;
 
-  label *p = findlabel(word);
-  if (p != nullptr && force_local && p->scope == 0 && p->type != VALUE) // if it's global and we're local
-    p = nullptr;                                                        // pretend we didn't see it (local label overrides global of the same name)
+  label *p = findlabel(label_name); // check if theres an existing label with the same name
+  if (p != nullptr && p->scope == 0 && p->type != VALUE && local)
+    p = nullptr; // if it's global and we're local, pretend we didn't see it (local label overrides global of the same name)
 
   // global labels advance current_scope
   if (!local)
@@ -1374,17 +1258,13 @@ void addlabel(char *word, bool force_local)
 
   if (p == nullptr)
   { // new label
-    labelhere = newlabel(my_strdup(word));
+    labelhere = newlabel(label_name);
     labelhere->type = LABEL; // assume it's a label.. could mutate into something else later
     labelhere->pass = current_pass;
     labelhere->value = addr;
-    labelhere->line = reinterpret_cast<char *>(addr >= 0 ? true_ptr : nullptr);
+    labelhere->kitchen_sink = reinterpret_cast<char *>(addr >= 0 ? true_ptr : nullptr);
     labelhere->used = false;
-
-    // [freem edit (from asm6_sonder.c)]
     labelhere->pos = filepos;
-
-    // [freem addition]
     labelhere->ignorenl = nonl;
 
     if (local)
@@ -1400,10 +1280,10 @@ void addlabel(char *word, bool force_local)
   else
   { // old label
     labelhere = p;
-    if (p->pass == current_pass && word[0] != '-')
-    { // if this label already encountered and not a backwards label
+    if (p->pass == current_pass && label_name[0] != '-')
+    { // if this label already encountered on this pass and not a backwards label
       if (p->type == VALUE)
-        return;
+        return; // values can be redefined
       else
         errmsg = LabelDefined;
     }
@@ -1412,15 +1292,15 @@ void addlabel(char *word, bool force_local)
       p->pass = current_pass;
       if (p->type == LABEL)
       {
-        if (p->value != addr && word[0] != '-')
-        {
-          needanotherpass = true; // label position is still moving around
+        if (p->value != addr && label_name[0] != '-')
+        { // label position is still moving around
+          needanotherpass = true;
           if (lastchance)
             errmsg = BadAddr;
         }
         p->value = addr;
         p->pos = filepos;
-        p->line = reinterpret_cast<char *>(addr >= 0 ? true_ptr : nullptr);
+        p->kitchen_sink = reinterpret_cast<char *>(addr >= 0 ? true_ptr : nullptr);
         if (lastchance && addr < 0)
           errmsg = BadAddr;
       }
@@ -1437,11 +1317,11 @@ void initlabels()
   labellist.push_back(&firstlabel); // '$' label
 
   // add reserved words to label list
-  for (const auto &word : mnemonics)
+  for (const auto &instruction : instructions)
   { // opcodes first
-    p = newlabel(word.first);
+    p = newlabel(instruction.mnemonic.c_str());
     p->value = (ptrdiff_t)opcode;
-    p->line = const_cast<char *>(reinterpret_cast<const char *>(word.second));
+    p->kitchen_sink = const_cast<char *>(reinterpret_cast<const char *>(&instruction.opcodes));
     p->type = RESERVED;
   }
 
@@ -1454,12 +1334,7 @@ void initlabels()
   lastlabel = p;
 }
 
-void initcomments()
-{
-  comments = std::vector<comment *>();
-}
-
-void addcomment(char *text)
+void addcomment(const std::string &text)
 {
   static unsigned oldpass = 0;
   int commentcount = comments.size();
@@ -1469,24 +1344,23 @@ void addcomment(char *text)
     commentcount = 0;
   }
 
-  text++; // ignore the leading ";"
+  auto text_begin = text.cbegin();
+  auto text_end = text.cend();
+  if (*text_begin == ';')
+    text_begin++; // ignore leading `;`
+  if (*text_end == '\n')
+    text_end--; // ignore trailing newline
 
   if (lastcommentpos == filepos)
-  {
-    // Append comment to the previous comment, since they are for the same address
+  { // Append comment to the previous comment, since they are for the same address
     comment *c = comments.at(commentcount - 1);
-
-    c->text += text;
+    c->text.append(text_begin, text_end);
   }
   else
-  {
-    // Add a new comment
+  { // Add a new comment
     comment *c = new comment;
     c->pos = filepos;
-    c->text = std::string(text);
-
-    // Get rid of last character (newline \n)
-    c->text.pop_back();
+    c->text = std::string(text_begin, text_end);
 
     comments.at(commentcount) = c;
     commentcount++;
@@ -1498,16 +1372,16 @@ void addcomment(char *text)
 // finds a label label with this label_name.
 // returns a pointer to the label if a label with the correct name and scope was
 // found, otherwise nullptr.
-label *findlabel(const char *label_name)
+label *findlabel(std::string label_name)
 {
   // find points to the first element in label list that whose name is not less than label name.
-  // i.e. the first element where `strcmp((*find)->name, label_name) >= 0`
+  // i.e. the first element where `(*find)->name >= label_name`
   auto find = std::lower_bound(labellist.begin(), labellist.end(), label_name,
-                               [](label *const &a, const char *const &b) {
-                                 return strcmp(a->name, b) < 0;
+                               [](label *const &a, const std::string &b) {
+                                 return a->name < b;
                                });
 
-  if (strcmp((*find)->name, label_name) != 0)
+  if (find == labellist.end() || label_name.compare((*find)->name) != 0)
   { // label was not found
     return nullptr;
   }
@@ -1516,7 +1390,7 @@ label *findlabel(const char *label_name)
   // scope is global
   label *p = *find;
   label *global = nullptr;
-  if (label_name[0] == '+')
+  if (!label_name.empty() && label_name.at(0) == '+')
   { // forward labels need special treatment
     do
     {
@@ -1546,20 +1420,22 @@ label *findlabel(const char *label_name)
 
 // Make new empty label with the given name and add it to the label list in
 // sorted order. If a label with this name already exists, the new label will
-// link to the old label and take its place in the label list
-label *newlabel(const char *label_name)
+// link to the old label and take its place in the label list.
+// No checks are perfomed on the label name, any validity checks should be done
+// prior to calling this fuction.
+label *newlabel(const std::string &label_name)
 {
   label *p = new label;
   p->name = label_name;
   p->scope = 0;
   // find points to the first element in label list that is not less than p.
-  // i.e. the first element where `strcmp((*find)->name, p->name) >= 0`
+  // i.e. the first element where `(*find)->name >= p->name`
   auto find = std::lower_bound(labellist.begin(), labellist.end(), p,
                                [](label *const &a, label *const &b) {
-                                 return strcmp(a->name, b->name) < 0;
+                                 return a->name < b->name;
                                });
 
-  if (strcmp((*find)->name, p->name) == 0)
+  if (find != labellist.end() && (*find)->name == p->name)
   { // label already exists with this name
     auto findindex = std::distance(labellist.begin(), find);
     p->link = *find;          // link new label to the old one
@@ -1573,38 +1449,36 @@ label *newlabel(const char *label_name)
   return p;
 }
 
-// why's this line here?
-// ============================================================================
-
-void showerror(char *errsrc, int errline)
+void showerror(const std::string &errsrc, const unsigned errline)
 {
   error = true;
-  fprintf(stderr, "%s(%i): %s\n", errsrc, errline, errmsg);
+  fprintf(stderr, "%s(%i): %s\n", errsrc.c_str(), errline, errmsg);
 
   if (!listerr) // only list the first error for this line
     listerr = errmsg;
 }
 
 // process the open file f
-char fileline[LINEMAX];
-void processfile(FILE *f, char *name)
+void processfile(FILE *f, const std::string &name)
 {
-  static int nest = 0;
+  static unsigned nest = 0; // nested include depth
+  nest++;
+
+  char fileline[LINEMAX];
   int nline = 0;
-  int eof;
-  nest++; // count nested include()s
+  bool eof;
   do
   {
     nline++;
-    eof = !fgets(fileline, LINEMAX, f);
+    eof = (fgets(fileline, LINEMAX, f) == NULL);
     if (!eof)
       processline(fileline, name, nline);
   } while (!eof);
-  nest--;
   nline--;
-  if (!nest)
-  { // if main source file (not included)
-    errmsg = 0;
+  nest--;
+  if (nest == 0)
+  { // if main source file
+    errmsg = nullptr;
     if (iflevel != 0)
       errmsg = NoENDIF;
     if (reptcount != 0)
@@ -1624,160 +1498,164 @@ void processfile(FILE *f, char *name)
 // src=source line
 // errsrc=source file name
 // errline=source file line number
-void processline(char *src, char *errsrc, int errline)
+void processline(const std::string &src, const std::string &errsrc, const unsigned errline)
 {
-  char line[LINEMAX]; // expanded line
-  char word[WORDMAX];
-  char *s, *s2, *comment;
-  char *endmac;
-  label *p;
+  errmsg = nullptr;
 
-  errmsg = 0;
-  comment = expandline(line, src);
+  auto src_iter = src.cbegin();
+  const auto src_end = src.cend();
+
+  std::string line;
+  expandline(line, src_iter, src_end);
+  auto line_iter = line.cbegin();
+  const auto line_end = line.cend();
+  const std::string comment{src_iter, src_end};
+
   if (macrolevel == 0 || verboselisting)
     listline(line, comment);
 
-  s = line;
   if (errmsg)
-  { // expandline error?
-    showerror(errsrc, errline);
+  {
+    showerror(errsrc.c_str(), errline);
+    return;
+  }
+
+  if (makemacro)
+  { // we're inside a macro definition
+    label *p = getreserved(line_iter, line_end);
+    errmsg = nullptr;
+    auto endmac = line_end;
+    if (p == nullptr)
+    { // skip over label if there is one, we're looking for "ENDM"
+      endmac = line_iter;
+      p = getreserved(line_iter, line_end);
+    }
+
+    if (p != nullptr && p->value == (ptrdiff_t)endm)
+    {
+      src_iter = src_end;
+      if (endmac != line_end)
+      { // TODO - fix
+        //endmac[0] = '\n';
+        //endmac[1] = '\0'; // hide "ENDM" in case of "label: ENDM"
+      }
+      else
+      { // don't bother adding the last line if its only ENDM
+        makemacro = nullptr;
+      }
+    }
+
+    if (makemacro != nullptr && makemacro != true_ptr)
+    { // TODO - fix this jank ass macro pointers
+      if (src_iter != src_end)
+        line.append(src_iter, src_end); // keep comment for listing
+      *makemacro = my_malloc(strlen(line.c_str()) + sizeof(char *) + 1);
+      makemacro = (char **)*makemacro;
+      *makemacro = nullptr;
+      strcpy((char *)&makemacro[1], line.c_str());
+    }
+
+    if (p != nullptr && p->value == (ptrdiff_t)endm)
+      makemacro = nullptr;
+  }
+  else if (reptcount != 0)
+  { // REPT definition in progress
+    label *p = getreserved(line_iter, line_end);
+    errmsg = nullptr;
+    auto endmac = line_end;
+    if (p == nullptr)
+    {
+      endmac = line_iter;
+      p = getreserved(line_iter, line_end);
+    }
+    if (p != nullptr)
+    {
+      if (p->value == (ptrdiff_t)rept)
+      {
+        reptcount++; // keep track of how many ENDR's are needed to finish
+      }
+      else if (p->value == (ptrdiff_t)endr)
+      {
+        if ((--reptcount) == 0)
+        {
+          src_iter = src_end;
+          if (endmac != line_end)
+          { // TODO - fix
+            //endmac[0] = '\n'; // hide "ENDR" in case of "label: ENDR"
+            //endmac[1] = 0;
+          }
+        }
+      }
+    }
+    if (reptcount != 0 || endmac != line_end)
+    { // add this line to REPT body
+      if (src_iter != src_end)
+        line.append(src_iter, src_end); // keep comment for listing
+      *makerept = my_malloc(strlen(line.c_str()) + sizeof(char *) + 1);
+      makerept = (char **)*makerept;
+      *makerept = 0;
+      strcpy((char *)&makerept[1], line.c_str());
+    }
+    if (reptcount == 0)
+    { // end of REPT, expand the whole thing right now
+      expandrept(errline, errsrc.c_str());
+    }
   }
   else
-  {
-    do // ????????
-    {
-      if (makemacro)
-      { // we're inside a macro definition
-        p = getreserved(&s);
-        errmsg = endmac = 0;
-        if (!p)
-        { // skip over label if there is one, we're looking for "ENDM"
-          endmac = s;
-          p = getreserved(&s);
-        }
-        if (p)
-          if (p->value == (ptrdiff_t)endm)
-          {
-            comment = nullptr;
-            if (endmac)
-            {
-              endmac[0] = '\n';
-              endmac[1] = 0; // hide "ENDM" in case of "label: ENDM"
-            }
-            else
-              makemacro = 0; // don't bother adding the last line
-          }
-        if (makemacro && makemacro != true_ptr)
-        {
-          if (comment != nullptr)
-            strcat(line, comment); // keep comment for listing
-          *makemacro = my_malloc(strlen(line) + sizeof(char *) + 1);
-          makemacro = (char **)*makemacro;
-          *makemacro = 0;
-          strcpy((char *)&makemacro[1], line);
-        }
-        if (p)
-          if (p->value == (ptrdiff_t)endm)
-            makemacro = 0;
-        break;
-      }
+  { // not in a macro or rept definition
+    labelhere = nullptr;
+    auto line_iter_temp = line_iter;
+    label *p = getreserved(line_iter, line_end);
+    errmsg = nullptr; // ignore errors?
 
-      if (reptcount != 0)
-      { // REPT definition is in progress?
-        p = getreserved(&s);
-        errmsg = endmac = 0;
-        if (!p)
-        {
-          endmac = s;
-          p = getreserved(&s);
-        }
-        if (p)
-        {
-          if (p->value == (ptrdiff_t)rept)
-          {
-            reptcount++; // keep track of how many ENDR's are needed to finish
-          }
-          else if (p->value == (ptrdiff_t)endr)
-          {
-            if ((--reptcount) == 0)
-            {
-              comment = nullptr;
-              if (endmac)
-              {
-                endmac[0] = '\n'; // hide "ENDR" in case of "label: ENDR"
-                endmac[1] = 0;
-              }
-            }
-          }
-        }
-
-        if (reptcount != 0 || endmac)
-        { // add this line to REPT body
-          if (comment != nullptr)
-            strcat(line, comment); // keep comment for listing
-          *makerept = my_malloc(strlen(line) + sizeof(char *) + 1);
-          makerept = (char **)*makerept;
-          *makerept = 0;
-          strcpy((char *)&makerept[1], line);
-        }
-        if (reptcount == 0)
-        { // end of REPT, expand the whole thing right now
-          expandrept(errline, errsrc);
-        }
-        break;
-      }
-
-      labelhere = 0; // for non-label symbol definitions (EQU,=,etc)
-      s2 = s;
-      p = getreserved(&s);
-      errmsg = 0;
-
-      if (skipline[iflevel])
-      { // conditional assembly.. no code generation
-        if (!p)
-        { // it was a label... ignore it and move on
-          p = getreserved(&s);
-          if (!p)
-            break;
-        }
-        if (p->value != (ptrdiff_t)else_ &&
-            p->value != (ptrdiff_t)elseif &&
-            p->value != (ptrdiff_t)endif &&
-            p->value != (ptrdiff_t)if_ &&
-            p->value != (ptrdiff_t)ifdef &&
-            p->value != (ptrdiff_t)ifndef)
-          break; // WHY
-      }
-      if (!p)
-      { // maybe a label?
-        if (getlabel(word, &s2))
-          addlabel(word, macrolevel);
-        if (errmsg)
-        {
-          showerror(errsrc, errline);
+    if (skipline[iflevel])
+    { // conditional assembly.. no code generation
+      if (p == nullptr)
+      { // p was not a reserved word, ignore it and move on
+        p = getreserved(line_iter, line_end);
+        if (p == nullptr)
           return;
-        }
+      }
+      if (p->value != (ptrdiff_t)else_ &&
+          p->value != (ptrdiff_t)elseif &&
+          p->value != (ptrdiff_t)endif &&
+          p->value != (ptrdiff_t)if_ &&
+          p->value != (ptrdiff_t)ifdef &&
+          p->value != (ptrdiff_t)ifndef)
+        return; // ignore all other instructions
+    }
 
-        p = getreserved(&s);
-      }
-      if (p)
-      {
-        if (p->type == MACRO)
-          expandmacro(p, &s, errline, errsrc);
-        else
-          ((icfn)p->value)(p, &s);
-      }
-      if (!errmsg)
-      { // check extra garbage
-        s += strspn(s, whitesp);
-        if (*s)
-          errmsg = "Extra characters on line.";
-      }
+    if (p == nullptr)
+    { // not a reserved word, maybe a label?
+      std::string word;
+      if (good_label(word, line_iter_temp, line_end))
+        addlabel(word, macrolevel > 0);
       if (errmsg)
       {
         showerror(errsrc, errline);
+        return;
       }
-    } while (0);
+      p = getreserved(line_iter, line_end);
+    }
+
+    if (p != nullptr)
+    {
+      if (p->type == MACRO) // calling a macro
+        expandmacro(p, line_iter, line_end, errline, errsrc);
+      else
+        ((directive_func)p->value)(p, line_iter, line_end);
+    }
+
+    if (!errmsg)
+    { // check extra garbage
+      line_iter = nonstd::eat_characters(line_iter, line_end, whitespace);
+      if (line_iter != line_end)
+        errmsg = "Extra characters on line.";
+    }
+    if (errmsg)
+    {
+      showerror(errsrc, errline);
+    }
   }
 }
 
@@ -1799,14 +1677,10 @@ void showhelp(void)
   puts("See README.TXT for more info.\n");
 }
 
-// -------------------------------------------------------------------------- //
-
 int main(int argc, char **argv)
 {
   char str[512];
-
   char *nameptr;
-
   FILE *f;
 
   if (argc < 2)
@@ -1815,7 +1689,7 @@ int main(int argc, char **argv)
     return EXIT_FAILURE;
   }
   initlabels();
-  initcomments();
+  comments = std::vector<comment *>();
 
   // Parse command line arguments
   unsigned notoption = 0;
@@ -1855,7 +1729,7 @@ int main(int argc, char **argv)
             label *p = newlabel(my_strdup(&argv[i][2]));
             p->type = VALUE;
             p->value = 1;
-            p->line = static_cast<char *>(true_ptr);
+            p->kitchen_sink = static_cast<char *>(true_ptr);
             p->pass = 0;
           }
         }
@@ -1916,7 +1790,7 @@ int main(int argc, char **argv)
   }
 
   f = fopen(inputfilename, "rb"); // if srcfile won't open, try some default extensions
-  if (!f)                         // this might be a bad idea
+  if (!f)                         // TODO should we really do this?
   {
     strcpy(nameptr, ".asm");
     f = fopen(str, "rb");
@@ -1951,18 +1825,20 @@ int main(int argc, char **argv)
     else
       message("pass %i..\n", current_pass);
     needanotherpass = false;
-    skipline[0] = 0;
+    skipline[0] = false;
     current_scope = 1;
     nextscope = 2;
     defaultfiller = DEFAULTFILLER; // reset filler value
     addr = NOORIGIN;               // undefine origin
     p = lastlabel;
-    nameptr = inputfilename;
-    include(0, &nameptr); // start assembling srcfile
+
+    const std::string filename_str{inputfilename};
+    auto filename_iter = filename_str.cbegin();
+    include(nullptr, filename_iter, filename_str.cend()); // start assembling srcfile
+
     if (errmsg)
-    {
-      // todo - shouldn't this set error?
-      fputs(errmsg, stderr); // bad inputfile??
+    { // todo - shouldn't this set error?
+      fputs(errmsg, stderr);
     }
   } while (!error && !lastchance && needanotherpass); // while no hard errors, not final try, and labels are still unresolved
 
@@ -1993,8 +1869,8 @@ int main(int argc, char **argv)
       fputs("nothing to do!", stderr);
     error = true;
   }
-  if (listfile)
-    listline(0, 0);
+  if (listfile != nullptr)
+    listline(nullptr, nullptr);
 
   // [freem addition] only generate labelfiles if asked
   if (genfceuxnl)
@@ -2007,10 +1883,9 @@ int main(int argc, char **argv)
   return error ? EXIT_FAILURE : 0;
 }
 
-#define LISTMAX 8 // number of output bytes to show in listing
 byte listbuff[LISTMAX];
 int listcount;
-void output(byte *p, int size, int cdlflag)
+void output(const byte *p, int size, int cdlflag)
 {
   static unsigned oldpass = 0;
   /*  static int noentry=0;
@@ -2108,7 +1983,7 @@ void output(byte *p, int size, int cdlflag)
   }
 }
 
-// Outputs integer as little-endian. See readme.txt for proper usage.
+// Outputs integer as little-endian.
 static void output_le(int n, int size, int cdlflag)
 {
   byte b[2];
@@ -2117,22 +1992,24 @@ static void output_le(int n, int size, int cdlflag)
   output(b, size, cdlflag);
 }
 
-// end listing when src=0
-char srcbuff[LINEMAX];
-void listline(char *src, char *comment)
+// end listing when src is empty string
+void listline(const std::string &src, const std::string &comment)
 {
   static unsigned oldpass = 0;
-  if (!listfilename)
+  std::string srcbuff;
+
+  if (listfilename == nullptr)
     return;
+
   if (oldpass != current_pass)
-  { // new pass = new listfile
+  { // new pass => new listfile
     oldpass = current_pass;
     if (listfile)
       fclose(listfile);
     listfile = fopen(listfilename, "w");
-    if (!listfile)
+    if (listfile == nullptr)
     {
-      listfilename = 0; // stop trying
+      listfilename = nullptr; // stop trying
       // todo - if user wants a listing, this SHOULD be an error, otherwise
       // he might still have old listing and think it's the current one.
       // For example, he might have had it open in a text editor, preventing its
@@ -2143,67 +2020,69 @@ void listline(char *src, char *comment)
   }
   else
   { // finish previous line
-    int i;
-    for (i = 0; i < listcount && i < LISTMAX; i++)
+    int i = 0;
+    for (; i < listcount && i < LISTMAX; i++)
       fprintf(listfile, " %02X", (int)listbuff[i]);
     for (; i < LISTMAX; i++)
       fprintf(listfile, "   ");
     fputs(listcount > LISTMAX ? ".. " : "   ", listfile);
-    fputs(srcbuff, listfile);
+    fputs(srcbuff.c_str(), listfile);
     if (listerr)
     {
       fprintf(listfile, "*** %s\n", listerr);
       listerr = 0;
     }
   }
+
   listcount = 0;
-  if (src)
-  {
-    if (addr < 0)
-      fprintf(listfile, "\t ");
-    else
-      fprintf(listfile, "%05X", (int)addr);
-    strcpy(srcbuff, src); // make a copy of the original source line
-    if (comment != nullptr)
-    {
-      strcat(srcbuff, comment);
-      if (genmesenlabels && filepos > 0 && addr < 0x10000)
-      {
-        // save this comment - needed for export
-        addcomment(comment);
-      }
-    }
-  }
-  else
-  {
+
+  if (src.empty())
+  { // TODO - move this out of function
     fclose(listfile);
     message("%s written.\n", listfilename);
+    return;
+  }
+
+  if (addr < 0)
+    fprintf(listfile, "\t ");
+  else
+    fprintf(listfile, "%05X", (int)addr);
+  srcbuff = src; // make a copy of the original source line
+  if (!comment.empty())
+  {
+    srcbuff += comment;
+    if (genmesenlabels && filepos > 0 && addr < 0x10000)
+    { // save this comment - needed for export
+      addcomment(comment.c_str());
+    }
   }
 }
 
 // Directives:
 // ------------------------------------------------------
-// <directive>(label *id, char **next)
+// <directive>(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 //
-//  id=reserved word
-//  **next=source line (ptr gets moved past directive on exit)
+//  id: reserved word
+//  **next: source line (ptr should be moved past directive on exit)
 // ------------------------------------------------------
-void equ(label *id, char **next)
+void equ(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
-  char str[LINEMAX];
-  char *s = *next;
   if (!labelhere)
     errmsg = NeedName; // EQU without a name
   else
   {
     if (labelhere->type == LABEL)
-    {                                       // new EQU.. good
-      reverse(str, s + strspn(s, whitesp)); // eat whitesp off both ends
-      reverse(s, str + strspn(str, whitesp));
-      if (*s)
+    { // new EQU
+      // eat whitespace off both ends
+      next = nonstd::eat_characters(next, end, whitespace);
+      const auto stop = nonstd::eat_characters(std::reverse_iterator(end), std::reverse_iterator(next), whitespace).base();
+      const std::string s{next, stop};
+      next = stop;
+
+      if (!s.empty())
       {
-        labelhere->line = my_strdup(s);
         labelhere->type = EQUATE;
+        labelhere->kitchen_sink = my_strdup(s.c_str());
       }
       else
       {
@@ -2214,28 +2093,29 @@ void equ(label *id, char **next)
     {
       errmsg = LabelDefined;
     }
-    *s = 0; // end line
+    //*s = 0; // end line
   }
 }
 
-void equal(label *id, char **next)
+void equal(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
-  if (!labelhere)      // labelhere=index+1
-    errmsg = NeedName; // (=) without a name
-  else
+  if (labelhere == nullptr)
   {
-    labelhere->type = VALUE;
-    dependant = 0;
-    labelhere->value = eval(next, WHOLEEXP);
-    labelhere->line = reinterpret_cast<char *>(!dependant ? true_ptr : nullptr);
+    errmsg = NeedName; // `=` without a name
+    return;
   }
+
+  labelhere->type = VALUE;
+  dependant = 0;
+  labelhere->value = eval(next, end, WHOLEEXP);
+  labelhere->kitchen_sink = reinterpret_cast<char *>(!dependant ? true_ptr : nullptr);
 }
 
-void base(label *id, char **next)
+void base(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
   int val;
   dependant = 0;
-  val = eval(next, WHOLEEXP);
+  val = eval(next, end, WHOLEEXP);
   if (!dependant && !errmsg)
     addr = val;
   else
@@ -2243,14 +2123,15 @@ void base(label *id, char **next)
 }
 
 // nothing to do (empty line)
-void nothing(label *id, char **next)
+void nothing(label *id, std::string::const_iterator &next, const std::string::const_iterator &end) noexcept
 {
 }
 
-void include(label *id, char **next)
+void include(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
-  char *np = *next;
-  FILE *f = getfile(np, "r+"); // read as text, the + makes recursion not possible
+  const std::string filename{next, end};
+  FILE *f = getfile(filename.c_str(), "r+"); // read as text, the + makes recursion not possible
+  // TODO cache files for next pass
   if (f == nullptr)
   {
     errmsg = CantOpen;
@@ -2258,16 +2139,16 @@ void include(label *id, char **next)
   }
   else
   {
-    processfile(f, np);
+    processfile(f, filename);
     fclose(f);
-    errmsg = nullptr; // let `main` know file was ok
+    errmsg = nullptr; // let main know file was ok
   }
-  *next = np + strlen(np); // need to play safe because this could be the main srcfile
+  next = end; // need to play safe because this could be the main srcfile
 }
 
-void incbin(label *id, char **next)
+void incbin(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
-  FILE *f = getfile(*next, "rb");
+  FILE *f = getfile(std::string(next, end), "rb");
   if (f == nullptr)
   {
     errmsg = CantOpen;
@@ -2278,29 +2159,29 @@ void incbin(label *id, char **next)
   int filesize = ftell(f);
 
   int seekpos = 0;
-  if (eatchar(next, ','))
-    seekpos = eval(next, WHOLEEXP);
+  if (next_arg(next, end))
+    seekpos = eval(next, end, WHOLEEXP);
   if (!errmsg && !dependant)
     if (seekpos < 0 || seekpos > filesize)
       errmsg = SeekOutOfRange;
   if (errmsg)
   {
-    if (f)
+    if (f != nullptr)
       fclose(f);
     return;
   }
   fseek(f, seekpos, SEEK_SET);
   // get size:
   int bytesleft;
-  if (eatchar(next, ','))
+  if (next_arg(next, end))
   {
-    bytesleft = eval(next, WHOLEEXP);
+    bytesleft = eval(next, end, WHOLEEXP);
     if (!errmsg && !dependant)
       if (bytesleft < 0 || bytesleft > (filesize - seekpos))
         errmsg = BadIncbinSize;
     if (errmsg)
     {
-      if (f)
+      if (f != nullptr)
         fclose(f);
       return;
     }
@@ -2322,53 +2203,43 @@ void incbin(label *id, char **next)
     bytesleft -= i;
   }
 
-  if (f)
+  if (f != nullptr)
     fclose(f);
 
-  *next += strlen(*next);
+  next = end;
 }
 
-void hex(label *id, char **next)
+void hex(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
-  char buff[LINEMAX];
-  char *src;
-  int dst;
-  char c1, c2;
-  getword(buff, next, 0);
-  if (!*buff)
+  next = nonstd::eat_characters(next, end, whitespace);
+  if (next == end)
+  {
     errmsg = MissingOperand;
-  else
-    do
+    return;
+  }
+
+  std::basic_string<byte> bytes;
+  while (next != end)
+  {
+    byte b = from_hex(*next);
+    next++;
+    if (next != end && std::isxdigit(*next))
     {
-      src = buff;
-      dst = 0;
-      do
-      {
-        c1 = hexify(*src);
-        src++;
-        if (*src)
-        {
-          c2 = hexify(*src);
-          src++;
-        }
-        else
-        { // deal with odd number of chars
-          c2 = c1;
-          c1 = 0;
-        }
-        buff[dst++] = (c1 << 4) + c2;
-      } while (*src);
-      output((byte *)buff, dst, DATA);
-      getword(buff, next, 0);
-    } while (*buff);
+      b = (b << 4) + from_hex(*next);
+      next++;
+    }
+    bytes += b;
+    next = nonstd::eat_characters(next, end, whitespace);
+  }
+  output(bytes.c_str(), bytes.size(), DATA);
 }
 
-void dw(label *id, char **next)
+void dw(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
   int val;
   do
   {
-    val = eval(next, WHOLEEXP);
+    val = eval(next, end, WHOLEEXP);
     if (!errmsg)
     {
       if (val > 65535 || val < -65536)
@@ -2376,73 +2247,66 @@ void dw(label *id, char **next)
       else
         output_le(val, 2, DATA);
     }
-  } while (!errmsg && eatchar(next, ','));
+  } while (!errmsg && next_arg(next, end));
 }
 
-void dl(label *id, char **next)
+void dl(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
   byte val;
   do
   {
-    val = eval(next, WHOLEEXP) & 0xff;
+    val = eval(next, end, WHOLEEXP) & 0xff;
     if (!errmsg)
       output(&val, 1, DATA);
-  } while (!errmsg && eatchar(next, ','));
+  } while (!errmsg && next_arg(next, end));
 }
 
-void dh(label *id, char **next)
+void dh(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
   byte val;
   do
   {
-    val = eval(next, WHOLEEXP) >> 8;
+    val = eval(next, end, WHOLEEXP) >> 8;
     if (!errmsg)
       output(&val, 1, DATA);
-  } while (!errmsg && eatchar(next, ','));
+  } while (!errmsg && next_arg(next, end));
 }
 
-void db(label *id, char **next)
+void db(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
-  int val, val2;
-  byte *s, *start;
-  char c, quote;
-
   do
   {
-    *next += strspn(*next, whitesp); // eatwhitespace
-    quote = **next;
-    if (quote == '"' || quote == '\'')
-    { // string
-      s = start = (byte *)*next + 1;
-      do
-      {
-        c = *s;
-        s++;
-        if (!c)
-          errmsg = IncompleteExp;
-        if (c == '\\')
-          s++;
-      } while (!errmsg && c != quote);
-      if (errmsg)
+    next = nonstd::eat_characters(next, end, whitespace);
+    const char quot = *next;
+    if (quot == '"' || quot == '\'')
+    { // string TODO allow db's with strings and commas
+      auto str_begin = next + 1;
+      while (next != end && *(next - 1) == '\\')
+        next = std::find(++next, end, quot);
+      if (next == end)
+      { // no terminating quot
+        errmsg = IncompleteExp;
         continue;
-      s--; // point to the "
-      *s = '0';
-      *next = (char *)s;
-      val2 = eval(next, WHOLEEXP);
+      }
+      // next now points to terminating quot character
+      // check for string shift
+      std::string temp{next, end};
+      temp[0] = '0'; // evaluate the shift value
+      auto it = temp.cbegin();
+      int shift = eval(it, temp.cend(), WHOLEEXP);
       if (errmsg)
-        continue;
-      while (start != s)
+        break;
+      while (str_begin != next)
       {
-        if (*start == '\\')
-          start++;
-        val = *start + val2;
-        start++;
-        output_le(val, 1, DATA);
+        if (*str_begin == '\\')
+          str_begin++; // garunteed to not run off end from checks above
+        output_le(*str_begin + shift, 1, DATA);
+        str_begin++;
       }
     }
     else
     {
-      val = eval(next, WHOLEEXP);
+      int val = eval(next, end, WHOLEEXP);
       if (!errmsg)
       {
         if (val > 255 || val < -128)
@@ -2451,19 +2315,19 @@ void db(label *id, char **next)
           output_le(val, 1, DATA);
       }
     }
-  } while (!errmsg && eatchar(next, ','));
+  } while (!errmsg && next_arg(next, end));
 }
 
-void dsw(label *id, char **next)
+void dsw(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
   int count;
   int val = defaultfiller;
   dependant = 0;
-  count = eval(next, WHOLEEXP);
+  count = eval(next, end, WHOLEEXP);
   if (dependant || (count < 0 && needanotherpass)) // unknown count! don't do anything
     count = 0;
-  if (eatchar(next, ','))
-    val = eval(next, WHOLEEXP);
+  if (next_arg(next, end))
+    val = eval(next, end, WHOLEEXP);
   if (!errmsg && !dependant)
     if (val > 65535 || val < -32768 || count < 0)
       errmsg = OutOfRange;
@@ -2473,13 +2337,13 @@ void dsw(label *id, char **next)
     output_le(val, 2, DATA);
 }
 
-void filler(int count, char **next)
+void filler(int count, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
   int val = defaultfiller;
   if (dependant || (count < 0 && needanotherpass)) // unknown count! don't do anything
     count = 0;
-  if (eatchar(next, ','))
-    val = eval(next, WHOLEEXP);
+  if (next_arg(next, end))
+    val = eval(next, end, WHOLEEXP);
   if (!errmsg && !dependant)
     if (val > 255 || val < -128 || count < 0 || count > 0x100000)
       errmsg = OutOfRange;
@@ -2489,19 +2353,18 @@ void filler(int count, char **next)
     output_le(val, 1, NONE);
 }
 
-void dsb(label *id, char **next)
+void dsb(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
   int count;
   dependant = 0;
-  count = eval(next, WHOLEEXP);
-  filler(count, next);
+  count = eval(next, end, WHOLEEXP);
+  filler(count, next, end);
 }
 
-void align(label *id, char **next)
+void align(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
-  int count;
   dependant = 0;
-  count = eval(next, WHOLEEXP);
+  unsigned count = eval(next, end, WHOLEEXP);
   if (count >= 0)
   {
     if ((unsigned int)addr % count)
@@ -2511,10 +2374,10 @@ void align(label *id, char **next)
   }
   else
     count = 0;
-  filler(count, next);
+  filler(count, next, end);
 }
 
-void pad(label *id, char **next)
+void pad(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
   int count;
   if (addr < 0)
@@ -2524,50 +2387,63 @@ void pad(label *id, char **next)
   else
   {
     dependant = 0;
-    count = eval(next, WHOLEEXP) - addr;
-    filler(count, next);
+    count = eval(next, end, WHOLEEXP) - addr;
+    filler(count, next, end);
   }
 }
 
-void org(label *id, char **next)
+void org(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
   if (addr < 0)
-    base(id, next); // this is the first ORG; PC hasn't been set yet
+    base(id, next, end); // this is the first ORG; PC hasn't been set yet
   else
-    pad(id, next);
+    pad(id, next, end);
 }
 
-void opcode(label *id, char **next)
+// Tries to take substr from begin.
+// whitespace and case are ignored.
+// returns true if the entire substr was found.
+bool take_string(std::string::const_iterator &begin, const std::string::const_iterator &end, const std::string substr)
 {
-  char *s, *s2;
-  int type, val = 0;
-  int oldstate = needanotherpass;
+  if (substr.empty())
+    return true;
+
+  for (const char &c : substr)
+  {
+    begin = nonstd::eat_characters(begin, end, whitespace);
+    if (begin == end || std::tolower(*begin) != std::tolower(c))
+      return false;
+    begin++;
+  }
+  return true;
+}
+
+void opcode(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
+{
+  const bool anotherpass_temp = needanotherpass;
   int forceRel = 0;
 
   if (!allowunstable)
-  {
     for (int uns = 0; uns < 4; uns++)
-    {
-      if (!strcmp(id->name, unstablelist[uns]))
-      {
-        fatal_error("Unstable instruction \"%s\" used without calling UNSTABLE.", id->name);
-      }
-    }
-  }
+      ;   // TODO //if (!strcmp(id->name, unstablelist[uns]))
+          //  fatal_error("Unstable instruction \"%s\" used without calling UNSTABLE.", id->name);
 
-  for (byte *op = (byte *)id->line; *op != END_BYTE; op += 2)
-  { // loop through all addressing modes for this instruction
-    needanotherpass = oldstate;
-    strcpy(tmpstr, *next);
-    dependant = 0;
-    errmsg = 0;
-    type = op[1];
-    s = tmpstr;
-    if (type != IMP && type != ACC)
-    { // get operand
-      if (!eatchar(&s, ophead[type]))
-        continue;
-      val = eval(&s, WHOLEEXP);
+  const std::map<optype, byte> modes = *(reinterpret_cast<std::map<optype, byte> *>(id->kitchen_sink)); // TODO this is disgusting
+  int val = 0;
+  for (const auto &mode : modes)
+  { // loop through all allowed addressing modes for this instruction
+    auto next_iter = next;
+    needanotherpass = anotherpass_temp;
+    dependant = false;
+    errmsg = nullptr;
+    const optype type = mode.first;
+
+    if (!take_string(next_iter, end, ophead[type]))
+      continue; // operand head dosent match
+
+    if (opsize[type] != 0)
+    { // evaluate operand
+      val = eval(next_iter, end, WHOLEEXP);
       if (type == REL)
       {
         if (!dependant)
@@ -2577,62 +2453,54 @@ void opcode(label *id, char **next)
           {
             needanotherpass = true; // give labels time to sort themselves out
             if (lastchance)
-            {
+            { // labels are as resolved as theyre going to be and branch is still out of range
               errmsg = "Branch out of range.";
               forceRel = 1;
             }
           }
         }
       }
-      else
+      else if (opsize[type] == 1)
       {
-        if (opsize[type] == 1)
+        if (!dependant)
         {
-          if (!dependant)
-          {
-            if (val > 255 || val < -128)
-              errmsg = OutOfRange;
-          }
-          else
-          {
-            if (type != IMM)
-              continue; // default to non-ZP instruction
-          }
-        }
-        else
-        { // opsize[type]==2
-          if ((val < 0 || val > 0xffff) && !dependant)
+          if (val > 255 || val < -128)
             errmsg = OutOfRange;
         }
+        else if (type != IMM)
+        { // default to non-ZP instruction
+          continue;
+        }
       }
+      else // opsize[type] > 1
+      {
+        if ((val < 0 || val > 0xffff) && !dependant)
+          errmsg = OutOfRange;
+      }
+
       if (errmsg && !dependant && !forceRel)
         continue;
     }
 
-    my_strupr(s);
-    s2 = const_cast<char *>(optail[type]);
-    while (*s2)
-    { // opcode tail should match input:
-      if (!eatchar(&s, *s2))
-        break;
-      s2++;
-    }
-    s += strspn(s, whitesp);
-    if (*s || *s2)
-      continue;
+    // opcode tail should match head
+    if (!take_string(next_iter, end, optail[type]))
+      continue; // tail missing
+    next_iter = nonstd::eat_characters(next_iter, end, whitespace);
+    if (next_iter != end)
+      continue; // extra tail
 
     if (addr > 0xffff)
       errmsg = "PC out of range.";
-    output(op, 1, CODE);
+    output(&mode.second, sizeof(mode.second), CODE);
     output_le(val, opsize[type], CODE);
-    *next += s - tmpstr;
+    next = next_iter;
     return;
   }
   if (!errmsg)
     errmsg = Illegal;
 }
 
-void if_(label *id, char **next)
+void if_(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
   int val;
   if (iflevel >= IFNESTS - 1)
@@ -2640,11 +2508,11 @@ void if_(label *id, char **next)
   else
     iflevel++;
   dependant = 0;
-  val = eval(next, WHOLEEXP);
+  val = eval(next, end, WHOLEEXP);
   if (dependant || errmsg)
   { // don't process yet
-    ifdone[iflevel] = 1;
-    skipline[iflevel] = 1;
+    ifdone[iflevel] = true;
+    skipline[iflevel] = true;
   }
   else
   {
@@ -2653,43 +2521,43 @@ void if_(label *id, char **next)
   }
 }
 
-void ifdef(label *id, char **next)
+void ifdef(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
-  char s[WORDMAX];
   if (iflevel >= IFNESTS - 1)
     errmsg = IfNestLimit;
   else
     iflevel++;
-  getlabel(s, next);
-  skipline[iflevel] = !(ptrdiff_t)findlabel(s) || skipline[iflevel - 1];
+  std::string temp;
+  good_label(temp, next, end);
+  skipline[iflevel] = (findlabel(temp) == nullptr) || skipline[iflevel - 1];
   ifdone[iflevel] = !skipline[iflevel];
 }
 
-void ifndef(label *id, char **next)
+void ifndef(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
-  char s[WORDMAX];
   if (iflevel >= IFNESTS - 1)
     errmsg = IfNestLimit;
   else
     iflevel++;
-  getlabel(s, next);
-  skipline[iflevel] = (ptrdiff_t)findlabel(s) || skipline[iflevel - 1];
+  std::string temp;
+  good_label(temp, next, end);
+  skipline[iflevel] = (findlabel(temp) != nullptr) || skipline[iflevel - 1];
   ifdone[iflevel] = !skipline[iflevel];
 }
 
-void elseif(label *id, char **next)
+void elseif(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
   int val;
   if (iflevel != 0)
   {
     dependant = 0;
-    val = eval(next, WHOLEEXP);
+    val = eval(next, end, WHOLEEXP);
     if (!ifdone[iflevel])
     { // no previous true statements
       if (dependant || errmsg)
       { // don't process yet
-        ifdone[iflevel] = 1;
-        skipline[iflevel] = 1;
+        ifdone[iflevel] = true;
+        skipline[iflevel] = true;
       }
       else
       {
@@ -2708,7 +2576,7 @@ void elseif(label *id, char **next)
   }
 }
 
-void else_(label *id, char **next)
+void else_(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
   if (iflevel != 0)
     skipline[iflevel] = ifdone[iflevel] || skipline[iflevel - 1];
@@ -2716,7 +2584,7 @@ void else_(label *id, char **next)
     errmsg = "ELSE without IF.";
 }
 
-void endif(label *id, char **next)
+void endif(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
   if (iflevel != 0)
     --iflevel;
@@ -2724,25 +2592,25 @@ void endif(label *id, char **next)
     errmsg = "ENDIF without IF.";
 }
 
-void endm(label *id, char **next)
+void endm(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 { // ENDM is handled during macro definition (see processline)
   errmsg = ExtraENDM;
 }
 
-void endr(label *id, char **next)
+void endr(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 { // ENDR is handled during macro definition (see processline)
   errmsg = ExtraENDR;
 }
 
-void macro(label *id, char **next)
+// create macro
+void macro(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
-  char *src;
-  char word[WORDMAX];
-  int params;
+  std::string word;
+  unsigned param_count;
+  labelhere = nullptr;
 
-  labelhere = 0;
-  if (getlabel(word, next))
-    addlabel(word, 0);
+  if (good_label(word, next, end))
+    addlabel(word, false);
   else
     errmsg = NeedName;
 
@@ -2751,26 +2619,28 @@ void macro(label *id, char **next)
   { // no valid macro name
     return;
   }
-  else if (labelhere->type == LABEL)
+
+  // jank check if this is a new label?
+  if (labelhere->type == LABEL)
   { // new macro
     labelhere->type = MACRO;
-    labelhere->line = 0;
-    makemacro = &labelhere->line;
+    labelhere->kitchen_sink = 0;
+    makemacro = &labelhere->kitchen_sink;
     // build param list
-    params = 0;
-    src = *next;
-    while (getlabel(word, &src))
-    { // don't affect **next directly, make sure it's a good name first
-      *next = src;
-      *makemacro = my_malloc(strlen(word) + sizeof(char *) + 1);
-      makemacro = (char **)*makemacro;
-      strcpy((char *)&makemacro[1], word);
-      ++params;
-      eatchar(&src, ',');
+    param_count = 0;
+    auto src = next;
+    while (good_label(word, src, end))
+    {
+      next = src; // this is some wack ass pointer magic
+      *makemacro = my_malloc(strlen(word.c_str()) + sizeof(char *) + 1);
+      makemacro = reinterpret_cast<char **>(*makemacro);
+      strcpy(reinterpret_cast<char *>(&makemacro[1]), word.c_str());
+      param_count++;
+      next_arg(src, end);
     }
-    errmsg = 0;                // remove getlabel's errmsg
-    labelhere->value = params; // set param count
-    *makemacro = 0;
+    errmsg = nullptr;               // remove good_label's errmsg
+    labelhere->value = param_count; // set param count
+    *makemacro = nullptr;
   }
   else if (labelhere->type != MACRO)
   {
@@ -2778,94 +2648,78 @@ void macro(label *id, char **next)
   }
   else
   { // macro was defined on a previous pass.. skip past params
-    **next = 0;
+    next = end;
   }
 }
 
+// call to a macro
 // errline=source file line number
 // errsrc=source file name
-void expandmacro(label *id, char **next, int errline, char *errsrc)
+void expandmacro(label *id, std::string::const_iterator &next, const std::string::const_iterator &end, unsigned errline, const std::string &errsrc)
 {
-  // char argname[8];
-  char macroerr[WORDMAX * 2]; // this should be enough, i hope..
-  char **line;
-  int linecount = 0;
-  int oldscope;
-  int arg, args;
-  char c, c2, *s, *s2, *s3;
-
   if (id->used)
   {
     errmsg = RecurseMACRO;
     return;
   }
+  id->used = true;
 
-  oldscope = current_scope; // watch those nested macros..
+  int linecount = 0;
+  const unsigned oldscope = current_scope; // watch those nested macros..
   current_scope = nextscope++;
   macrolevel++;
-  id->used = true;
-  sprintf(macroerr, "%s(%i):%s", errsrc, errline, id->name);
-  line = (char **)(id->line);
+  char **line = (char **)(id->kitchen_sink);
 
-  // define macro params
-  s = *next;
-  args = id->value; // (named args)
-  arg = 0;
-  do
+  std::string macroerr;
+  macroerr.reserve(WORDMAX * 2);
+  std::snprintf(macroerr.data(), macroerr.capacity(), "%s(%i):%s", errsrc.c_str(), errline, id->name.c_str());
+
+  // read in arguments
+  auto arg_iter = nonstd::eat_characters(next, end, whitespace);
+  unsigned arg_count = id->value; // parameter count
+  unsigned arg = 0;
+  while (arg_iter != end)
   {
-    s += strspn(s, whitesp);  // eatwhitespace s=param start
-    s2 = s;                   // s2=param end
-    s3 = strpbrk(s2, ",'\""); // stop at param end or string definition
-    if (!s3)
-      s3 = strchr(s2, 0);
-    c = *s3;
+    const std::string temp{",'\""};
+    auto arg_end = std::find_first_of(arg_iter, end, temp.cbegin(), temp.cend());
+    const char c = arg_end != end ? *arg_end : '\0';
     if (c == '"' || c == '\'')
-    { // go to end of string
-      s3++;
-      do
+    {
+      do // go to end of string
+        arg_end = std::find(++arg_end, end, c);
+      while (arg_end != end && *(arg_end - 1) == '\\');
+      if (arg_end == end)
       {
-        c2 = *s3;
-        s3++;
-        if (c2 == '\\')
-          s3++;
-      } while (c2 && c2 != c);
-      if (!c2)
-        s3--; // oops..too far
-      c = *s3;
-    }
-    s2 = s3;
-    *s2 = 0;
-    if (*s)
-    { // arg not empty
-      //  sprintf(argname,"\\%i",arg);  // make indexed arg
-      //  addlabel(argname,1);
-      //  equ(0,&s);
-      if (arg < args)
-      { // make named arg
-        addlabel((char *)&line[1], 1);
-        equ(0, &s);
-        line = (char **)*line; // next arg name
+        errmsg = "Unterminated string.";
+        return;
       }
-      arg++;
     }
-    *s2 = c;
-    s = s2;
-  } while (eatchar(&s, ','));
-  *next = s;
+
+    if (arg < arg_count)
+    {                                       // make named arg, god this is jank
+      addlabel({(char *)&(line[1])}, true); // set labelhere to new label
+      equ(nullptr, arg_iter, arg_end);      //
+      line = (char **)*line;                // next arg name
+    }
+    arg++;
+    arg_iter = arg_end;
+    next_arg(arg_iter, end);
+  }
+  next = arg_iter;
 
   // make "\?" arg
-  // {..}
+  // {..}  what
 
-  while (arg++ < args) // skip any unused arg names
+  while (arg++ < arg_count) // skip any unused arg names
     line = (char **)*line;
 
-  while (line)
+  while (line != nullptr)
   {
     linecount++;
-    processline((char *)&line[1], macroerr, linecount);
+    processline((char *)&(line[1]), macroerr, linecount);
     line = (char **)*line;
   }
-  errmsg = 0;
+  errmsg = nullptr;
   current_scope = oldscope;
   macrolevel--;
   id->used = false;
@@ -2873,10 +2727,10 @@ void expandmacro(label *id, char **next, int errline, char *errsrc)
 
 int rept_loops;
 char *repttext; // rept chain begins here
-void rept(label *id, char **next)
+void rept(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
-  dependant = 0;
-  rept_loops = eval(next, WHOLEEXP);
+  dependant = false;
+  rept_loops = eval(next, end, WHOLEEXP);
   if (dependant || errmsg || rept_loops < 0)
     rept_loops = 0;
   makerept = &repttext;
@@ -2884,7 +2738,7 @@ void rept(label *id, char **next)
   reptcount++; // tell processline to start storing up rept lines
 }
 
-void expandrept(int errline, char *errsrc)
+void expandrept(int errline, const char *const errsrc)
 {
   char macroerr[WORDMAX * 2]; // source to show in listing (this should be enough, i hope?)
   char **start, **line;
@@ -2919,18 +2773,17 @@ void expandrept(int errline, char *errsrc)
 }
 
 int enum_saveaddr;
-void enum_(label *id, char **next)
+void enum_(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
-  int val = 0;
   dependant = 0;
-  val = eval(next, WHOLEEXP);
+  int val = eval(next, end, WHOLEEXP);
   if (!nooutput)
     enum_saveaddr = addr;
   addr = val;
   nooutput = true;
 }
 
-void ende(label *id, char **next)
+void ende(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
   if (nooutput)
   {
@@ -2943,14 +2796,12 @@ void ende(label *id, char **next)
   }
 }
 
-// [freem addition]
-void ignorenl(label *id, char **next)
+void ignorenl(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
   nonl = true;
 }
 
-// [freem addition]
-void endinl(label *id, char **next)
+void endinl(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
   if (nonl)
     nonl = false;
@@ -2958,32 +2809,30 @@ void endinl(label *id, char **next)
     errmsg = ExtraENDINL;
 }
 
-void fillval(label *id, char **next)
+void fillval(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
-  dependant = 0;
-  defaultfiller = eval(next, WHOLEEXP);
+  dependant = false; // why?
+  defaultfiller = eval(next, end, WHOLEEXP);
 }
 
-void make_error(label *id, char **next)
+void make_error(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
-  char *s = *next;
-  reverse(tmpstr, s + strspn(s, whitesp2)); // eat whitesp, quotes off both ends
-  reverse(s, tmpstr + strspn(tmpstr, whitesp2));
-  errmsg = s;
+  const std::string message{next, end};
+  errmsg = message.c_str();
   error = true;
-  *next = s + strlen(s);
+  next = end;
 }
 
-void unstable(label *id, char **next)
+void unstable(label *id, std::string::const_iterator &next, const std::string::const_iterator &end) noexcept
 {
   allowunstable = true;
 }
 
-// [nicklausw] ines stuff
+// iNES header functions
 
-void inesprg(label *id, char **next)
+void inesprg(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
-  inesprg_num = eval(next, WHOLEEXP);
+  inesprg_num = eval(next, end, WHOLEEXP);
 
   if (inesprg_num < 0 || inesprg_num > 0xFF)
     errmsg = OutOfRange;
@@ -2991,9 +2840,9 @@ void inesprg(label *id, char **next)
   ines_include = true;
 }
 
-void ineschr(label *id, char **next)
+void ineschr(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
-  ineschr_num = eval(next, WHOLEEXP);
+  ineschr_num = eval(next, end, WHOLEEXP);
 
   if (ineschr_num < 0 || ineschr_num > 0xFF)
     errmsg = OutOfRange;
@@ -3001,9 +2850,9 @@ void ineschr(label *id, char **next)
   ines_include = true;
 }
 
-void inesmir(label *id, char **next)
+void inesmir(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
-  inesmir_num = eval(next, WHOLEEXP);
+  inesmir_num = eval(next, end, WHOLEEXP);
 
   // force 4 bits
   if (inesmir_num > 16 || inesmir_num < 0)
@@ -3012,9 +2861,9 @@ void inesmir(label *id, char **next)
   ines_include = true;
 }
 
-void inesmap(label *id, char **next)
+void inesmap(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
-  inesmap_num = eval(next, WHOLEEXP);
+  inesmap_num = eval(next, end, WHOLEEXP);
 
   // ines 2.0 allows for some big numbers...
   if (inesmap_num > 4095 || inesmap_num < 0)
@@ -3023,9 +2872,9 @@ void inesmap(label *id, char **next)
   ines_include = true;
 }
 
-void nes2chrram(label *id, char **next)
+void nes2chrram(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
-  nes2chr_num = eval(next, WHOLEEXP);
+  nes2chr_num = eval(next, end, WHOLEEXP);
 
   if (nes2chr_num < 0 || nes2chr_num > 16)
     errmsg = OutOfRange;
@@ -3034,9 +2883,9 @@ void nes2chrram(label *id, char **next)
   use_nes2 = 1;
 }
 
-void nes2prgram(label *id, char **next)
+void nes2prgram(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
-  nes2prg_num = eval(next, WHOLEEXP);
+  nes2prg_num = eval(next, end, WHOLEEXP);
 
   if (nes2prg_num < 0 || nes2prg_num > 16)
     errmsg = OutOfRange;
@@ -3045,9 +2894,9 @@ void nes2prgram(label *id, char **next)
   use_nes2 = 1;
 }
 
-void nes2sub(label *id, char **next)
+void nes2sub(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
-  nes2sub_num = eval(next, WHOLEEXP);
+  nes2sub_num = eval(next, end, WHOLEEXP);
 
   if (nes2sub_num < 0 || nes2sub_num > 16)
     errmsg = OutOfRange;
@@ -3056,9 +2905,9 @@ void nes2sub(label *id, char **next)
   use_nes2 = 1;
 }
 
-void nes2tv(label *id, char **next)
+void nes2tv(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
-  nes2tv_num = eval(next, WHOLEEXP);
+  nes2tv_num = eval(next, end, WHOLEEXP);
 
   // possible presets...
   if (nes2tv_num == 'N')
@@ -3077,16 +2926,16 @@ void nes2tv(label *id, char **next)
   use_nes2 = 1;
 }
 
-void nes2vs(label *id, char **next)
+void nes2vs(label *id, std::string::const_iterator &next, const std::string::const_iterator &end) noexcept
 {
   nes2vs_num = 1;
   ines_include = true;
   use_nes2 = 1;
 }
 
-void nes2bram(label *id, char **next)
+void nes2bram(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
-  nes2bram_num = eval(next, WHOLEEXP);
+  nes2bram_num = eval(next, end, WHOLEEXP);
 
   if (nes2bram_num < 0 || nes2bram_num > 16)
     errmsg = OutOfRange;
@@ -3095,9 +2944,9 @@ void nes2bram(label *id, char **next)
   use_nes2 = 1;
 }
 
-void nes2chrbram(label *id, char **next)
+void nes2chrbram(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
-  nes2chrbram_num = eval(next, WHOLEEXP);
+  nes2chrbram_num = eval(next, end, WHOLEEXP);
 
   if (nes2chrbram_num < 0 || nes2chrbram_num > 16)
     errmsg = OutOfRange;
