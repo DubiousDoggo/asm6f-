@@ -20,9 +20,8 @@
 #define LISTMAX 8             // number of output bytes to show in listing
 
 typedef uint8_t byte;
-const byte END_BYTE = -1;
 
-enum labeltype
+enum label_t
 {
   LABEL,    // known address
   VALUE,    // defined with '='
@@ -40,7 +39,7 @@ enum cdltype
 
 // operand type, also called addressing mode
 // The ordering here is important for parsing
-enum optype
+enum operand_t
 {
   ACC, // Accumulator
   IMM, // Immediate
@@ -107,7 +106,7 @@ const unsigned opsize[] = {
 };
 
 // precedence levels from lowest to highest
-enum prectypes
+enum precedence_t
 {
   WHOLEEXP,
   ORORP,
@@ -123,7 +122,7 @@ enum prectypes
   UNARY,
 };
 
-enum operators
+enum operator_t
 {
   NOOP,       // no operation
   EQUAL,      // equal to
@@ -147,7 +146,7 @@ enum operators
 };
 
 // precedence of each operator
-const prectypes prec[] = {
+const precedence_t prec[] = {
     WHOLEEXP,  // no operation
     EQCOMPARE, // equal to
     EQCOMPARE, // not equal
@@ -174,10 +173,11 @@ struct label
   std::string name; //label name
 
   // value represents different things depending on the label's usage
-  // label: memory address,
-  // equate: value
-  // macro: param count
-  // reserved word: function pointer
+  // LABEL: memory address,
+  // EQUATE: value
+  // VALUE: value
+  // MACRO: param count
+  // RESERVED: function pointer
   ptrdiff_t value;
 
   int pos; // Location in file; used to determine bank when exporting labels
@@ -186,7 +186,7 @@ struct label
                       // the first <value> lines hold param names.
                       // for opcodes (reserved), this holds opcode definitions, see initlabels
 
-  labeltype type;
+  label_t type;
   bool used;      // for EQU and MACRO recursion check
   unsigned pass;  // when label was last defined
   unsigned scope; // where this label is visible (0=global, nonzero=local)
@@ -194,10 +194,18 @@ struct label
   label *link;    // labels that share the same name are chained together
 };
 
+typedef void (*directive_func)(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
+
 struct instruction
 {
   const std::string mnemonic;
-  const std::map<optype, byte> opcodes;
+  const std::map<operand_t, byte> opcodes;
+};
+
+struct directive
+{
+  const char *name;
+  directive_func func;
 };
 
 struct comment
@@ -206,25 +214,91 @@ struct comment
   int pos;
 };
 
-typedef void (*directive_func)(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
+static void message(const char fmt[], ...);
+static void fatal_error(const char fmt[], ...);
+void showhelp();
+void showerror(const std::string &errsrc, const unsigned errline);
 
-struct directive
-{
-  const char *name;
-  directive_func func;
-};
+static char *my_malloc(size_t s);
+static char *my_strdup(const char *in);
+char *my_strupr(char *string);
+byte from_hex(const char c);
+byte from_bin(const char c);
+bool take_string(std::string::const_iterator &begin, const std::string::const_iterator &end, const std::string substr);
+bool next_arg(std::string::const_iterator &str, const std::string::const_iterator &end);
 
-void addlabel(std::string word, bool force_local);
-label *newlabel(const std::string &label_name);
-label *findlabel(std::string label_name);
+FILE *getfile(std::string filename, const char *args);
+void processfile(FILE *f, const std::string &name);
 
-void listline(const std::string &, const std::string &);
-void endlist();
 void processline(const std::string &src, const std::string &errsrc, const unsigned errline);
+void expandline(std::string &dst, std::string::const_iterator &src, const std::string::const_iterator &end);
+
 void expandmacro(label *, std::string::const_iterator &, const std::string::const_iterator &, unsigned, const std::string &);
 void expandrept(int, const char *const);
 
+operator_t getoperator(std::string::const_iterator &str, const std::string::const_iterator &end);
+int getvalue(std::string::const_iterator &begin, const std::string::const_iterator &end);
+int eval(std::string::const_iterator &str, const std::string::const_iterator &end, const precedence_t precedence_t);
+
+void initlabels();
+bool goodlabel(std::string &dst, std::string::const_iterator &next, const std::string::const_iterator &end);
+bool comparelabels(const label *a, const label *b);
+void addlabel(std::string word, bool force_local);
+label *newlabel(const std::string &label_name);
+label *getlabel(std::string label_name);
+label *getreserved(std::string::const_iterator &src, const std::string::const_iterator &end);
+
+void addcomment(const std::string &text);
+int comparecomments(const void *a, const void *b);
+
+void listline(const std::string &, const std::string &);
+void endlist();
+
+void export_labelfiles();
+void export_lua();
+void export_mesenlabels();
+
 // reserved word functions //
+
+void opcode(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
+
+void equ(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
+void equal(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
+
+void include(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
+void incbin(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
+
+void org(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
+void base(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
+void pad(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
+void fillval(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
+void filler(int count, std::string::const_iterator &next, const std::string::const_iterator &end);
+void align(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
+
+void db(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
+void dw(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
+void dl(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
+void dh(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
+void dsb(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
+void dsw(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
+void hex(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
+void enum_(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
+void ende(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
+
+void ignorenl(label *id, std::string::const_iterator &next, const std::string::const_iterator &end);
+void endinl(label *id, std::string::const_iterator &next, const std::string::const_iterator &end);
+
+void ifdef(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
+void ifndef(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
+void if_(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
+void else_(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
+void elseif(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
+void endif(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
+
+void macro(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
+void endm(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
+void rept(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
+void endr(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
 
 void inesprg(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
 void ineschr(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
@@ -239,39 +313,8 @@ void nes2vs(label *, std::string::const_iterator &next, const std::string::const
 void nes2bram(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
 void nes2chrbram(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
 
-void align(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
-void base(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
-void db(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
-void dh(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
-void dl(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
-void dsb(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
-void dsw(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
-void dw(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
-void else_(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
-void elseif(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
-void ende(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
-void endif(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
-void endinl(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
-void endm(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
-void endr(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
-void enum_(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
-void equ(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
-void equal(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
-void fillval(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
-void hex(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
-void if_(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
-void ifdef(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
-void ifndef(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
-void ignorenl(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
-void incbin(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
-void include(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
-void macro(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
 void make_error(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
 void nothing(label *, std::string::const_iterator &next, const std::string::const_iterator &end) noexcept;
-void opcode(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
-void org(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
-void pad(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
-void rept(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
 void unstable(label *, std::string::const_iterator &next, const std::string::const_iterator &end) noexcept;
 
 #endif
