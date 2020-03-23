@@ -17,20 +17,20 @@ static void *true_ptr = &true_ptr; // a pointer masquerading as a bool
 
 unsigned current_pass = 0; // current assembly pass
 unsigned current_scope;    // current scope, 0=global
-unsigned nextscope;        // next nonglobal scope (increment on each new block of localized code)
 
 bool lastchance = false; // set on final attempt
 bool needanotherpass;    // still need to take care of some things..
 bool error = false;      // hard error (stop assembly after this pass)
 const char *errmsg;
 
-char **makemacro = nullptr; // (during macro creation) where next macro line will go. set to true_ptr to skip past macro
-char **makerept;            // like makemacro.. points to end of string chain
-unsigned macrolevel = 0;    // number of nested macro/rept being expanded
-unsigned reptcount = 0;     // counts rept statements during rept string storage
-unsigned iflevel = 0;       // index into ifdone[],skipline[]
-bool ifdone[IFNESTS];       // true if current IF level has been true
-bool skipline[IFNESTS];     // true on an IF statement that is false
+linked_string **makemacro = nullptr; // (during macro creation) where next macro line will go.
+bool skipmacro = false;
+char **makerept;         // like makemacro.. points to end of string chain
+unsigned macrolevel = 0; // number of nested macro/rept being expanded
+unsigned reptcount = 0;  // counts rept statements during rept string storage
+unsigned iflevel = 0;    // index into ifdone[],skipline[]
+bool ifdone[IFNESTS];    // true if current IF level has been true
+bool skipline[IFNESTS];  // true on an IF statement that is false
 
 char *inputfilename = nullptr;     // input file name
 char *outputfilename = nullptr;    // output file name
@@ -85,9 +85,9 @@ size_t commentcount;
 std::vector<label *> labellist; // all of the labels allocated thus far
 label *lastlabel;               // last label created
 label *labelhere;               // points to the label being defined on the current line (for EQU, =, and MACRO)
-label firstlabel;
+label firstlabel;               // The program counter label, '$'
 
-const std::vector<instruction> instructions{
+const std::vector<instruction_init> instructions{
     {"ADC", {{ABS, 0x6d}, {ABX, 0x7d}, {ABY, 0x79}, {IMM, 0x69}, {IDX, 0x61}, {IDY, 0x71}, {ZPX, 0x75}, {ZPG, 0x65}}},
     {"AND", {{ABS, 0x2d}, {ABX, 0x3d}, {ABY, 0x39}, {IMM, 0x29}, {IDX, 0x21}, {IDY, 0x31}, {ZPG, 0x25}, {ZPX, 0x35}}},
     {"ASL", {{ACC, 0x0a}, {ZPX, 0x16}, {ABX, 0x1e}, {ZPG, 0x06}, {ABS, 0x0e}, {IMP, 0x0a}}},
@@ -168,10 +168,9 @@ const std::vector<instruction> instructions{
     {"XAA", {{IMM, 0x8b}}},
 };
 
-const char *unstablelist[] = {
-    "AHX", "SHY", "SHX", "TAS", "XAA"};
+const char *unstablelist[]{"AHX", "SHY", "SHX", "TAS", "XAA"};
 
-const std::vector<directive> directives{
+const std::vector<directive_init> directives{
     {"", nothing},
     {"IF", if_},
     {"ELSEIF", elseif},
@@ -225,8 +224,10 @@ const std::vector<directive> directives{
     {"NES2VS", nes2vs},
     {"NES2BRAM", nes2bram},
     {"NES2CHRBRAM", nes2chrbram},
-    {"UNSTABLE", unstable}};
+    {"UNSTABLE", unstable},
+};
 
+// Error messages //
 const char OutOfRange[] = "Value out of range.";
 const char SeekOutOfRange[] = "Seek position out of range.";
 const char BadIncbinSize[] = "INCBIN size is out of range.";
@@ -252,20 +253,12 @@ const char NoENDR[] = "Missing ENDR.";
 const char NoENDE[] = "Missing ENDE.";
 const char NoENDINL[] = "Missing ENDINL.";
 const char IfNestLimit[] = "Too many nested IFs.";
-const char UndefinedPC[] = "PC is undefined (use ORG first)";
+const char UndefinedPC[] = "PC is undefined (use ORG first).";
 
-const std::string whitespace_filename{"\t\r\n\""};
-#define whitesp2 whitespace_filename.c_str() // (used for filename processing)
-
+const std::string whitespace_filename{" \t\r\n\""};
 const std::string whitespace{" \t\r\n"};
-#define whitesp whitespace.c_str()
-
 const std::string math_chars{"!^&|+-*/%()<>=,"};
-#define mathy math_chars.c_str()
-
 const std::string math_delimiters{whitespace + math_chars};
-
-char tmpstr[LINEMAX]; // all purpose big string
 
 int main(int argc, char **argv)
 {
@@ -319,7 +312,7 @@ int main(int argc, char **argv)
             label *p = newlabel(my_strdup(&argv[i][2]));
             p->type = VALUE;
             p->value = 1;
-            p->kitchen_sink = static_cast<char *>(true_ptr);
+            p->known = true;
             p->pass = 0;
           }
         }
@@ -417,7 +410,6 @@ int main(int argc, char **argv)
     needanotherpass = false;
     skipline[0] = false;
     current_scope = 1;
-    nextscope = 2;
     defaultfiller = DEFAULTFILLER; // reset filler value
     addr = NOORIGIN;               // undefine origin
     p = lastlabel;
@@ -427,7 +419,7 @@ int main(int argc, char **argv)
     include(nullptr, filename_iter, filename_str.cend()); // start assembling srcfile
 
     if (errmsg)
-    { // todo - shouldn't this set error?
+    { // todo - shouldn't this set error? - not if its a soft error
       fputs(errmsg, stderr);
     }
   } while (!error && !lastchance && needanotherpass); // while no hard errors, not final try, and labels are still unresolved
@@ -447,9 +439,7 @@ int main(int argc, char **argv)
       fatal_error("Write error.");
 
     if (!error)
-    {
       message("%s written (%i bytes).\n", outputfilename, i);
-    }
     else
       remove(outputfilename);
   }
@@ -625,10 +615,10 @@ bool next_arg(std::string::const_iterator &str, const std::string::const_iterato
 
 FILE *getfile(std::string filename, const char *args)
 {
-  filename.erase(0, filename.find_first_not_of(" \t\r\n\""));
-  filename.erase(filename.find_last_not_of(" \t\r\n\"") + 1);
+  filename.erase(0, filename.find_first_not_of(whitespace_filename));
+  filename.erase(filename.find_last_not_of(whitespace_filename) + 1);
   FILE *f = fopen(filename.c_str(), args);
-  if (!f && includepath != nullptr)
+  if (f == nullptr && includepath != nullptr)
   { // try with path
     filename.insert(0, "\\");
     filename.insert(0, includepath);
@@ -644,8 +634,8 @@ FILE *getfile(std::string filename, const char *args)
 // process the open file f
 void processfile(FILE *f, const std::string &name)
 {
-  static unsigned nest = 0; // nested include depth
-  nest++;
+  static unsigned include_level = 0; // nested include depth
+  include_level++;
 
   char fileline[LINEMAX];
   int nline = 0;
@@ -658,15 +648,15 @@ void processfile(FILE *f, const std::string &name)
       processline(fileline, name, nline);
   } while (!eof);
   nline--;
-  nest--;
-  if (nest == 0)
+  include_level--;
+  if (include_level == 0)
   { // if main source file
     errmsg = nullptr;
     if (iflevel != 0)
       errmsg = NoENDIF;
     if (reptcount != 0)
       errmsg = NoENDR;
-    if (makemacro)
+    if (makemacro != nullptr)
       errmsg = NoENDM;
     if (nooutput)
       errmsg = NoENDE;
@@ -703,48 +693,44 @@ void processline(const std::string &src, const std::string &errsrc, const unsign
     return;
   }
 
-  if (makemacro)
+  if (makemacro != nullptr || skipmacro)
   { // we're inside a macro definition
+
+    auto temp_iter = line_iter;
     label *p = getreserved(line_iter, line_end);
-    errmsg = nullptr;
-    auto endmac = line_end;
+    errmsg = nullptr; // ignore error in case of label
+
     if (p == nullptr)
     { // skip over label if there is one, we're looking for "ENDM"
-      endmac = line_iter;
+      temp_iter = line_iter;
       p = getreserved(line_iter, line_end);
     }
 
-    if (p != nullptr && p->value == (ptrdiff_t)endm)
-    {
-      src_iter = src_end;
-      if (endmac != line_end)
-      { // TODO - fix
-        //endmac[0] = '\n';
-        //endmac[1] = '\0'; // hide "ENDM" in case of "label: ENDM"
-      }
-      else
-      { // don't bother adding the last line if its only ENDM
-        makemacro = nullptr;
-      }
+    if (p != nullptr && p->func == endm)
+    { // there is an ENDM on this line
+      // remove the ENDM, line should either be empty or only have a label
+      line.erase(temp_iter, line_end);
     }
 
-    if (makemacro != nullptr && makemacro != true_ptr)
-    { // TODO - fix this jank ass macro pointers
-      if (src_iter != src_end)
-        line.append(src_iter, src_end); // keep comment for listing
-      *makemacro = my_malloc(strlen(line.c_str()) + sizeof(char *) + 1);
-      makemacro = (char **)*makemacro;
-      *makemacro = nullptr;
-      strcpy((char *)&makemacro[1], line.c_str());
+    if (makemacro != nullptr)
+    { // add the line to the macro
+      if (!comment.empty())
+        line.append(comment); // keep comment for listing
+      *makemacro = new linked_string{line, nullptr};
+      makemacro = &(*makemacro)->next;
     }
 
-    if (p != nullptr && p->value == (ptrdiff_t)endm)
+    if (p != nullptr && p->func == endm)
+    { // there is an ENDM on this line
+      // terminate the macro making
       makemacro = nullptr;
+      skipmacro = false;
+    }
   }
   else if (reptcount != 0)
   { // REPT definition in progress
     label *p = getreserved(line_iter, line_end);
-    errmsg = nullptr;
+    errmsg = nullptr; // ignore in case of label
     auto endmac = line_end;
     if (p == nullptr)
     {
@@ -753,11 +739,11 @@ void processline(const std::string &src, const std::string &errsrc, const unsign
     }
     if (p != nullptr)
     {
-      if (p->value == (ptrdiff_t)rept)
+      if (p->func == rept)
       {
         reptcount++; // keep track of how many ENDR's are needed to finish
       }
-      else if (p->value == (ptrdiff_t)endr)
+      else if (p->func == endr)
       {
         if ((--reptcount) == 0)
         {
@@ -772,8 +758,8 @@ void processline(const std::string &src, const std::string &errsrc, const unsign
     }
     if (reptcount != 0 || endmac != line_end)
     { // add this line to REPT body
-      if (src_iter != src_end)
-        line.append(src_iter, src_end); // keep comment for listing
+      if (!comment.empty())
+        line.append(comment); // keep comment for listing
       *makerept = my_malloc(strlen(line.c_str()) + sizeof(char *) + 1);
       makerept = (char **)*makerept;
       *makerept = 0;
@@ -789,7 +775,7 @@ void processline(const std::string &src, const std::string &errsrc, const unsign
     labelhere = nullptr;
     auto line_iter_temp = line_iter;
     label *p = getreserved(line_iter, line_end);
-    errmsg = nullptr; // ignore errors?
+    errmsg = nullptr; // ignore error in case of label
 
     if (skipline[iflevel])
     { // conditional assembly.. no code generation
@@ -799,12 +785,12 @@ void processline(const std::string &src, const std::string &errsrc, const unsign
         if (p == nullptr)
           return;
       }
-      if (p->value != (ptrdiff_t)else_ &&
-          p->value != (ptrdiff_t)elseif &&
-          p->value != (ptrdiff_t)endif &&
-          p->value != (ptrdiff_t)if_ &&
-          p->value != (ptrdiff_t)ifdef &&
-          p->value != (ptrdiff_t)ifndef)
+      if (p->func != else_ &&
+          p->func != elseif &&
+          p->func != endif &&
+          p->func != if_ &&
+          p->func != ifdef &&
+          p->func != ifndef)
         return; // ignore all other instructions
     }
 
@@ -826,7 +812,7 @@ void processline(const std::string &src, const std::string &errsrc, const unsign
       if (p->type == MACRO) // calling a macro
         expandmacro(p, line_iter, line_end, errline, errsrc);
       else
-        ((directive_func)p->value)(p, line_iter, line_end);
+        (p->func)(p, line_iter, line_end);
     }
 
     if (!errmsg)
@@ -927,7 +913,7 @@ void expandline(std::string &dst, std::string::const_iterator &src, const std::s
       if (p != nullptr)
       { // p is a valid equate
         p->used = true;
-        const std::string temp{p->kitchen_sink};
+        const std::string temp{p->equ};
         auto temp_iter = temp.begin();
         expandline(dst, temp_iter, temp.end());
         p->used = false;
@@ -1052,41 +1038,39 @@ int getvalue(std::string::const_iterator &begin, const std::string::const_iterat
     }
   }
 
-  { // label
-    label *p = getlabel(gv);
-    if (p == nullptr)
-    { // label doesn't exist (yet?)
-      needanotherpass = true;
-      dependant = 1;
-      if (lastchance)
-      { // only show error once we're certain label will never exist
-        errmsg = UnknownLabel;
-      }
-      return 0;
+  // label
+  label *p = getlabel(gv);
+  if (p == nullptr)
+  { // label doesn't exist (yet?)
+    needanotherpass = true;
+    dependant = true;
+    if (lastchance)
+    { // only show error once we're certain label will never exist
+      errmsg = UnknownLabel;
     }
-    else
-    {
-      dependant |= !p->kitchen_sink;
-      needanotherpass |= !p->kitchen_sink;
-      if (p->type == LABEL || p->type == VALUE)
-      {
-        return p->value;
-      }
-      else if (p->type == MACRO)
-      {
-        errmsg = "Can't use macro in expression.";
-        return 0;
-      }
-      else
-      { // what else is there?
-        errmsg = UnknownLabel;
-        return 0;
-      }
-    }
+    return 0;
   }
+
+  dependant |= !p->known;
+  needanotherpass |= !p->known;
+  if (p->type == LABEL)
+    return p->address;
+
+  if (p->type == VALUE)
+    return p->value;
+
+  if (p->type == MACRO)
+  {
+    errmsg = "Can't use macro in expression.";
+    return 0;
+  }
+
+  // what else is there?
+  errmsg = UnknownLabel;
+  return 0;
 }
 
-// get operator from str and advance str
+// get (binary) operator from str and advance str
 operator_t getoperator(std::string::const_iterator &str, const std::string::const_iterator &end)
 {
   str = nonstd::eat_characters(str, end, whitespace);
@@ -1193,7 +1177,7 @@ label *getreserved(std::string::const_iterator &src, const std::string::const_it
 
   label *p = getlabel(upp); // case insensitive reserved word
   if (p == nullptr)
-    p = getlabel(dst); // or case sensitive macro
+    p = getlabel(dst); // or case sensitive label type
 
   if (p != nullptr)
   {
@@ -1377,36 +1361,34 @@ void initlabels()
 {
   label *p;
   labellist = std::vector<label *>();
-  firstlabel = {
-      // '$' label
-      "$",               // *name
-      0,                 // value
-      0,                 // pos
-      (char *)&true_ptr, // *kitchen_sink
-      VALUE,             // type
-      false,             // used
-      0,                 // pass
-      0,                 // scope
-      false,             // ignorenl
-      nullptr,           // link
-  };
+  firstlabel.name = "$";
+  firstlabel.type = VALUE;
+  firstlabel.value = 0;
+  firstlabel.pos = 0;
+  firstlabel.known = true;
+  firstlabel.used = false;
+  firstlabel.pass = 0;
+  firstlabel.scope = 0;
+  firstlabel.ignorenl = false;
+  firstlabel.link = nullptr;
 
   labellist.push_back(&firstlabel); // '$' label
 
   // add reserved words to label list
-  for (const auto &instruction : instructions)
+  for (const auto &i : instructions)
   { // opcodes first
-    p = newlabel(instruction.mnemonic.c_str());
-    p->value = (ptrdiff_t)opcode;
-    p->kitchen_sink = const_cast<char *>(reinterpret_cast<const char *>(&instruction.opcodes));
+    p = newlabel(i.mnemonic);
     p->type = RESERVED;
+    p->func = instruction;
+    p->opcodes = &i.opcodes;
   }
 
-  for (const auto &directive : directives)
+  for (const auto &d : directives)
   { // other reserved words now
-    p = newlabel(directive.name);
-    p->value = (ptrdiff_t)directive.func;
+    p = newlabel(d.name);
     p->type = RESERVED;
+    p->func = d.func;
+    p->opcodes = nullptr;
   }
   lastlabel = p;
 }
@@ -1442,9 +1424,10 @@ label *newlabel(const std::string &label_name)
   return p;
 }
 
-// Creates a new label and adds it to the label list. Sets labelhere to the new label.
+// Creates a new label with the given name and adds it to the label list.
+// Sets labelhere to the new label.
 // If force_local is set, the label will be treated as a local, otherwise the
-// label will be local only if it starts with LOCALCHAR.
+// label will be local only if its name starts with LOCALCHAR.
 void addlabel(std::string label_name, bool force_local)
 {
   const bool local = force_local || label_name.at(0) == LOCALCHAR;
@@ -1455,29 +1438,24 @@ void addlabel(std::string label_name, bool force_local)
 
   // global labels advance current_scope
   if (!local)
-  {
-    current_scope = nextscope++;
-  }
+    current_scope++;
 
   if (p == nullptr)
   { // new label
     labelhere = newlabel(label_name);
-    labelhere->type = LABEL; // assume it's a label.. could mutate into something else later
+    labelhere->type = LABEL; // assume it's a label, could mutate into something else later
     labelhere->pass = current_pass;
-    labelhere->value = addr;
-    labelhere->kitchen_sink = reinterpret_cast<char *>(addr >= 0 ? true_ptr : nullptr);
+    labelhere->address = addr;
+    labelhere->known = addr >= 0;
     labelhere->used = false;
     labelhere->pos = filepos;
     labelhere->ignorenl = nonl;
 
     if (local)
-    { // local
       labelhere->scope = current_scope;
-    }
-    else
-    { // global
+    else // global
       labelhere->scope = 0;
-    }
+
     lastlabel = labelhere;
   }
   else
@@ -1495,15 +1473,15 @@ void addlabel(std::string label_name, bool force_local)
       p->pass = current_pass;
       if (p->type == LABEL)
       {
-        if (p->value != addr && label_name[0] != '-')
+        if (p->address != addr && label_name[0] != '-')
         { // label position is still moving around
           needanotherpass = true;
           if (lastchance)
             errmsg = BadAddr;
         }
-        p->value = addr;
+        p->address = addr;
         p->pos = filepos;
-        p->kitchen_sink = reinterpret_cast<char *>(addr >= 0 ? true_ptr : nullptr);
+        p->known = addr >= 0;
         if (lastchance && addr < 0)
           errmsg = BadAddr;
       }
@@ -1561,7 +1539,7 @@ bool goodlabel(std::string &dst, std::string::const_iterator &next, const std::s
   }
 }
 
-// finds a label label with this label_name.
+// Finds a label label with this label_name.
 // returns a pointer to the label if a label with the correct name and scope was
 // found, otherwise nullptr.
 label *getlabel(std::string label_name)
@@ -1573,7 +1551,7 @@ label *getlabel(std::string label_name)
                                  return a->name < b;
                                });
 
-  if (find == labellist.end() || label_name.compare((*find)->name) != 0)
+  if (find == labellist.end() || label_name != (*find)->name)
   { // label was not found
     return nullptr;
   }
@@ -1584,7 +1562,7 @@ label *getlabel(std::string label_name)
   label *global = nullptr;
   if (!label_name.empty() && label_name.at(0) == '+')
   { // forward labels need special treatment
-    do
+    while (p != nullptr)
     {
       if (p->pass != current_pass)
       { // dont consider forward labels already processed on this pass
@@ -1594,18 +1572,18 @@ label *getlabel(std::string label_name)
           return p;
       }
       p = p->link;
-    } while (p);
+    }
   }
   else
   {
-    do
+    while (p != nullptr)
     {
       if (p->scope == 0)
         global = p;
       if (p->scope == current_scope)
         return p;
       p = p->link;
-    } while (p);
+    }
   }
   return global; // return global label only if no locals were found
 }
@@ -1848,8 +1826,8 @@ void listline(const std::string &src, const std::string &comment)
   }
 }
 
-// iterate through all the labels and output FCEUX-compatible label info files
-// based on their type (LABEL's,EQUATE's,VALUE's), address (ram/rom), and position (bank)
+// Iterates through all the labels and outputs FCEUX-compatible label info files
+// based on their type (LABEL, EQUATE, VALUE), address (ram/rom), and position (bank).
 // ram file: <output>.ram.nl
 // bank files: <output>.<bank number in hex>.nl
 void export_labelfiles()
@@ -1861,7 +1839,7 @@ void export_labelfiles()
 
   for (int i = 0; i < 64; i++)
   {
-    bankfiles[i] = 0;
+    bankfiles[i] = nullptr;
   }
 
   strcpy(filename, outputfilename);
@@ -1876,7 +1854,7 @@ void export_labelfiles()
 
   FILE *ramfile = fopen(filename, "w");
 
-  // the bank files are created ad-hoc before being written to.
+  // The bank files are created ad-hoc before being written to.
 
   // iNES banks are 16kb. Subtracting the 16 byte header and dividing that by
   // 16384 will get us the bank number of a particular label.
@@ -1896,7 +1874,7 @@ void export_labelfiles()
         (
             l->type == LABEL ||
             ((l->type == EQUATE || l->type == VALUE) && l->name.length() > 1)) &&
-        l->value < 0x10000)
+        l->value <= 0xFFFF)
     {
       sprintf(str, "$%04X#%s#\n", (unsigned int)l->value, l->name.c_str());
       // puts(str);
@@ -1939,7 +1917,7 @@ void export_lua()
   strptr = strrchr(filename, '.'); // strptr ='.'ptr
   if (strptr)
     if (strchr(strptr, '\\'))
-      strptr = 0; // watch out for "dirname.ext\listfile"
+      strptr = nullptr; // watch out for "dirname.ext\listfile"
   if (!strptr)
     strptr = filename + strlen(str); // strptr -> inputfile extension
   strcpy(strptr, ".lua");
@@ -1960,8 +1938,8 @@ void export_lua()
   fclose(mainfile);
 }
 
-// iterate through all the labels and output Mesen-compatible label files
-// based on their type (LABEL's,EQUATE's,VALUE's) and address (ram/rom)
+// Iterates through all the labels and outputs Mesen-compatible label files
+// based on their type (LABEL, EQUATE, VALUE) and address (ram/rom)
 void export_mesenlabels()
 {
   std::string filename{outputfilename};
@@ -2079,7 +2057,7 @@ void export_mesenlabels()
 //  next: source line (ptr should be moved past directive on exit)
 // ------------------------------------------------------
 
-void opcode(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
+void instruction(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
   const bool anotherpass_temp = needanotherpass;
   int forceRel = 0;
@@ -2089,9 +2067,8 @@ void opcode(label *id, std::string::const_iterator &next, const std::string::con
       ;   // TODO //if (!strcmp(id->name, unstablelist[uns]))
           //  fatal_error("Unstable instruction \"%s\" used without calling UNSTABLE.", id->name);
 
-  const std::map<operand_t, byte> modes = *(reinterpret_cast<std::map<operand_t, byte> *>(id->kitchen_sink)); // TODO this is disgusting
   int val = 0;
-  for (const auto &mode : modes)
+  for (const auto &mode : *id->opcodes)
   { // loop through all allowed addressing modes for this instruction
     auto next_iter = next;
     needanotherpass = anotherpass_temp;
@@ -2165,7 +2142,7 @@ void opcode(label *id, std::string::const_iterator &next, const std::string::con
 
 void equ(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
-  if (!labelhere)
+  if (labelhere == nullptr)
     errmsg = NeedName; // EQU without a name
   else
   {
@@ -2180,7 +2157,7 @@ void equ(label *id, std::string::const_iterator &next, const std::string::const_
       if (!s.empty())
       {
         labelhere->type = EQUATE;
-        labelhere->kitchen_sink = my_strdup(s.c_str());
+        labelhere->equ = my_strdup(s.c_str());
       }
       else
       {
@@ -2204,15 +2181,15 @@ void equal(label *id, std::string::const_iterator &next, const std::string::cons
   }
 
   labelhere->type = VALUE;
-  dependant = 0;
+  dependant = false;
   labelhere->value = eval(next, end, WHOLEEXP);
-  labelhere->kitchen_sink = reinterpret_cast<char *>(!dependant ? true_ptr : nullptr);
+  labelhere->known = !dependant;
 }
 
 void include(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
   const std::string filename{next, end};
-  FILE *f = getfile(filename.c_str(), "r+"); // read as text, the + makes recursion not possible
+  FILE *f = getfile(filename, "r+"); // read as text, the + makes recursion not possible
   // TODO cache files for next pass
   if (f == nullptr)
   {
@@ -2640,7 +2617,6 @@ void endif(label *id, std::string::const_iterator &next, const std::string::cons
 void macro(label *id, std::string::const_iterator &next, const std::string::const_iterator &end)
 {
   std::string word;
-  unsigned param_count;
   labelhere = nullptr;
 
   if (goodlabel(word, next, end))
@@ -2648,7 +2624,6 @@ void macro(label *id, std::string::const_iterator &next, const std::string::cons
   else
     errmsg = NeedName;
 
-  makemacro = static_cast<char **>(true_ptr); // flag for processline to skip to ENDM
   if (errmsg)
   { // no valid macro name
     return;
@@ -2658,23 +2633,20 @@ void macro(label *id, std::string::const_iterator &next, const std::string::cons
   if (labelhere->type == LABEL)
   { // new macro
     labelhere->type = MACRO;
-    labelhere->kitchen_sink = 0;
-    makemacro = &labelhere->kitchen_sink;
+    labelhere->macro_lines = nullptr;
+    makemacro = &labelhere->macro_lines;
     // build param list
-    param_count = 0;
+    labelhere->param_count = 0;
     auto src = next;
     while (goodlabel(word, src, end))
     {
-      next = src; // this is some wack ass pointer magic
-      *makemacro = my_malloc(strlen(word.c_str()) + sizeof(char *) + 1);
-      makemacro = reinterpret_cast<char **>(*makemacro);
-      strcpy(reinterpret_cast<char *>(&makemacro[1]), word.c_str());
-      param_count++;
+      next = src;
+      *makemacro = new linked_string{word, nullptr};
+      makemacro = &(*makemacro)->next;
+      labelhere->param_count++;
       next_arg(src, end);
     }
-    errmsg = nullptr;               // remove goodlabel's errmsg
-    labelhere->value = param_count; // set param count
-    *makemacro = nullptr;
+    errmsg = nullptr; // remove goodlabel's errmsg
   }
   else if (labelhere->type != MACRO)
   {
@@ -2683,6 +2655,7 @@ void macro(label *id, std::string::const_iterator &next, const std::string::cons
   else
   { // macro was defined on a previous pass.. skip past params
     next = end;
+    skipmacro = true;
   }
 }
 
@@ -2696,6 +2669,9 @@ void endm(label *id, std::string::const_iterator &next, const std::string::const
 // errsrc=source file name
 void expandmacro(label *id, std::string::const_iterator &next, const std::string::const_iterator &end, unsigned errline, const std::string &errsrc)
 {
+  if (id->type != MACRO)
+    throw std::invalid_argument("id is not a macro label");
+
   if (id->used)
   {
     errmsg = RecurseMACRO;
@@ -2705,9 +2681,9 @@ void expandmacro(label *id, std::string::const_iterator &next, const std::string
 
   int linecount = 0;
   const unsigned oldscope = current_scope; // watch those nested macros..
-  current_scope = nextscope++;
+  current_scope++;
   macrolevel++;
-  char **line = (char **)(id->kitchen_sink);
+  linked_string *line = id->macro_lines;
 
   std::string macroerr;
   macroerr.reserve(WORDMAX * 2);
@@ -2715,7 +2691,7 @@ void expandmacro(label *id, std::string::const_iterator &next, const std::string
 
   // read in arguments
   auto arg_iter = nonstd::eat_characters(next, end, whitespace);
-  unsigned arg_count = id->value; // parameter count
+  unsigned arg_count = id->param_count;
   unsigned arg = 0;
   while (arg_iter != end)
   {
@@ -2735,10 +2711,10 @@ void expandmacro(label *id, std::string::const_iterator &next, const std::string
     }
 
     if (arg < arg_count)
-    {                                       // make named arg, god this is jank
-      addlabel({(char *)&(line[1])}, true); // set labelhere to new label
-      equ(nullptr, arg_iter, arg_end);      //
-      line = (char **)*line;                // next arg name
+    {                                  // make named arg
+      addlabel(line->text, true);      // set labelhere to new label
+      equ(nullptr, arg_iter, arg_end); //
+      line = line->next;               // next arg name
     }
     arg++;
     arg_iter = arg_end;
@@ -2750,13 +2726,13 @@ void expandmacro(label *id, std::string::const_iterator &next, const std::string
   // {..}  what
 
   while (arg++ < arg_count) // skip any unused arg names
-    line = (char **)*line;
+    line = line->next;
 
   while (line != nullptr)
   {
     linecount++;
-    processline((char *)&(line[1]), macroerr, linecount);
-    line = (char **)*line;
+    processline(line->text, macroerr, linecount);
+    line = line->next;
   }
   errmsg = nullptr;
   current_scope = oldscope;
@@ -2795,7 +2771,7 @@ void expandrept(int errline, const char *const errsrc)
   for (int i = rept_loops; i; --i)
   {
     linecount = 0;
-    current_scope = nextscope++;
+    current_scope++;
     sprintf(macroerr, "%s(%i):REPT", errsrc, errline);
     line = start;
     while (line)

@@ -21,15 +21,6 @@
 
 typedef uint8_t byte;
 
-enum label_t
-{
-  LABEL,    // known address
-  VALUE,    // defined with '='
-  EQUATE,   // defined with EQU
-  MACRO,    // macro definition
-  RESERVED, // reserved word (opcode, directive, etc.)
-};
-
 enum cdltype
 {
   NONE = 0,
@@ -146,7 +137,7 @@ enum operator_t
 };
 
 // precedence of each operator
-const precedence_t prec[] = {
+const precedence_t prec[]{
     WHOLEEXP,  // no operation
     EQCOMPARE, // equal to
     EQCOMPARE, // not equal
@@ -168,43 +159,60 @@ const precedence_t prec[] = {
     SHIFT,     // bitwise shift right
 };
 
-struct label
+enum label_t
 {
-  std::string name; //label name
-
-  // value represents different things depending on the label's usage
-  // LABEL: memory address,
-  // EQUATE: value
-  // VALUE: value
-  // MACRO: param count
-  // RESERVED: function pointer
-  ptrdiff_t value;
-
-  int pos; // Location in file; used to determine bank when exporting labels
-
-  char *kitchen_sink; // macros have jank format of *[*next_line, line_text] where
-                      // the first <value> lines hold param names.
-                      // for opcodes (reserved), this holds opcode definitions, see initlabels
-
-  label_t type;
-  bool used;      // for EQU and MACRO recursion check
-  unsigned pass;  // when label was last defined
-  unsigned scope; // where this label is visible (0=global, nonzero=local)
-  bool ignorenl;  // should this label be suppressed from .nl files
-  label *link;    // labels that share the same name are chained together
+  LABEL,    // known address
+  VALUE,    // defined with '='
+  EQUATE,   // defined with EQU
+  MACRO,    // macro definition
+  RESERVED, // reserved word
 };
 
-typedef void (*directive_func)(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
+struct label;
 
-struct instruction
+typedef void (*directive_func)(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
+struct linked_string
+{
+  std::string text;
+  linked_string *next;
+};
+
+struct label
+{
+  std::string name; // label name
+  label_t type;     // union tag
+  label *link;      // labels that share the same name are chained together
+  unsigned pass;    // when label was last defined
+  unsigned scope;   // where this label is visible (0=global, nonzero=local)
+  int pos;          // Location in file; used to determine bank when exporting labels
+  bool ignorenl;    // should this label be suppressed from .nl files
+  bool used;        // for EQU and MACRO recursion check
+
+  // represents different things depending on the label's usage
+  union {
+    ptrdiff_t address;    // LABEL: memory address,
+    int value;            // VALUE: value
+    unsigned param_count; // MACRO: param count
+    directive_func func;  // RESERVED: function pointer
+  };
+
+  union {
+    char *equ;                                // EQUATE
+    bool known;                               // LABEL, VALUE
+    const std::map<operand_t, byte> *opcodes; // RESERVED, for opcodes, this holds opcode definitions, see initlabels
+    linked_string *macro_lines;               // MACRO, macros have jank format of *[*next_line, line_text] where the first <param_count> lines hold param names.
+  };
+};
+
+struct instruction_init
 {
   const std::string mnemonic;
   const std::map<operand_t, byte> opcodes;
 };
 
-struct directive
+struct directive_init
 {
-  const char *name;
+  const std::string name;
   directive_func func;
 };
 
@@ -260,7 +268,7 @@ void export_mesenlabels();
 
 // reserved word functions //
 
-void opcode(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
+void instruction(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
 
 void equ(label *, std::string::const_iterator &next, const std::string::const_iterator &end);
 void equal(label *, std::string::const_iterator &next, const std::string::const_iterator &end);

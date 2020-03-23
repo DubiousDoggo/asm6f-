@@ -2,4 +2,3 @@
 *.o
 *.obj
 .vscode/settings.json
-test_cases
